@@ -16,6 +16,7 @@ import { buildExterior, sat } from './exterior.js';
 import { Character, Player, FollowCamera, DEFAULT_LOOK } from './player.js';
 import { NavGrid } from './nav.js';
 import { Balls } from './balls.js';
+import { loadLightmaps } from './lightmap.js';
 import { renderMaps, drawMinimap, drawPath, drawLayers, roomAtMap, BUILDING_VIEW, MAP_BOUNDS } from './map.js';
 import { inRect } from './geo.js';
 import { LEVEL_H, wx, wz, hy, STAGE, MAIN_HALL_Y } from './layout.js';
@@ -150,7 +151,9 @@ function updateBulbs(dt, p, indoor) {
         if (b.at) b.light.position.set(b.at[0], b.at[1] - 0.35, b.at[2]);
       }
     } else if (b.at) b.k = Math.min(1, b.k + dt * 3);
-    b.light.intensity = b.at ? b.k * indoor * (b.at[1] - p.y > 5 ? 26 : 9) : 0;
+    // with baked lighting the fixtures' light is already in the walls and floors; the
+    // pool of real-time light stays for the character, furniture and floor highlights
+    b.light.intensity = b.at ? b.k * indoor * (b.at[1] - p.y > 5 ? 26 : 9) * (baked ? 0.25 : 1) : 0;
     b.light.distance = b.at && b.at[1] - p.y > 5 ? 16 : 10;
   }
 }
@@ -250,6 +253,7 @@ const progress = (pct, msg) => {
 
 // ------------------------------------------------------------------ build the world
 let info, ext, nav, maps, world, player, character, cam, balls;
+let baked = null; // lightmap manifest once the baked lighting has loaded
 let running = false;
 
 async function build() {
@@ -305,6 +309,12 @@ async function build() {
   }
   initPathViz();
   applyQuality();
+  // baked lighting loads in the background; the game starts with real-time lighting
+  loadLightmaps(info.lightmap, info.lightmapped).then((man) => {
+    if (!man) return;
+    baked = man;
+    applyQuality();
+  });
   await progress(100, 'Ready.');
 }
 
@@ -1153,7 +1163,7 @@ function updateSun(p, inside) {
   sun.position.copy(center).addScaledVector(sunDir, 300);
   const k = shadows ? 0 : indoorK;
   sun.intensity = 3.1 * (1 - k * 0.85);
-  hemi.intensity = 0.35 + indoorK * 0.1;
+  hemi.intensity = baked ? 0.35 * (1 - indoorK) + 0.12 * indoorK : 0.35 + indoorK * 0.1;
   hemi.color.lerpColors(HEMI_OUT[0], HEMI_IN[0], indoorK);
   hemi.groundColor.lerpColors(HEMI_OUT[1], HEMI_IN[1], indoorK);
   const env = indoorK > 0.5 ? roomEnv : skyEnv;
@@ -1218,6 +1228,7 @@ window.__game = {
   routeToRoom: (rm) => { setDestination(rm); const p = navPath; clearNav(); return p; },
   keys,
   sat,
+  sunDir,
   scene,
   camera,
   get balls() { return balls; },

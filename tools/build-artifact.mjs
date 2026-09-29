@@ -22,4 +22,9 @@ html = html
   .replace(/<meta name="viewport"[^>]*>\s*/i, '');
 fs.writeFileSync(path.join(out, 'index.html'), html);
 for (const f of fs.readdirSync(path.join(root, 'src'))) fs.copyFileSync(path.join(root, 'src', f), path.join(out, 'src', f));
+const lm = path.join(root, 'lightmaps');
+if (fs.existsSync(lm)) {
+  fs.mkdirSync(path.join(out, 'lightmaps'), { recursive: true });
+  for (const f of fs.readdirSync(lm)) fs.copyFileSync(path.join(lm, f), path.join(out, 'lightmaps', f));
+}
 console.log('wrote', out);

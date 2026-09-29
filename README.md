@@ -71,6 +71,10 @@ Every room is transcribed in [`src/layout.js`](src/layout.js) as rectangles in "
 
 **Graphics.** Materials are physically based (`src/materials.js`) with procedural color and normal maps (`src/textures.js`). The sky is a physical sky model that also lights the scene through image-based lighting outdoors; indoors a neutral room environment takes over. The sun casts soft shadows; indoors the shadow map covers the whole building so rooms far down a hallway are still shaded by the roof. The post-processing chain is ambient occlusion (GTAO), bloom, a light vignette and ACES tone mapping.
 
+**Materials.** Inside, the walls are painted cinder block (40 × 20 cm units with a pitted face and concave joints). Outside is modular brick whose mortar is the same color as the brick, so the joints read only as a shallow groove.
+
+**Baked lighting.** The light from all ~1,400 ceiling fixtures, the daylight coming in through the windows and doors, and the sun's bounce light are baked into lightmaps with Blender's Cycles path tracer, so every room and hallway has soft light pools and light bouncing off the walls, not just the area around you. Direct sunlight stays real-time so shadows still move with you. The game uses the lightmaps only if they were baked from exactly the current geometry (it checks a fingerprint); otherwise it falls back to real-time lighting. See [Rebaking the lighting](#rebaking-the-lighting).
+
 ### What's approximate
 
 - The plans are photocopies with no scale bar, so dimensions are fitted, not surveyed.
@@ -94,9 +98,25 @@ src/physics.js    box colliders in a spatial hash, stairs and sunken floors
 src/nav.js        A* pathfinding across both floors (stairwells link them)
 src/map.js        minimap and campus map (north-up)
 src/textures.js   procedural textures and normal maps (brick, block, tile, carpet, turf…) with no image files
+src/lightmap.js   lightmap UV atlas for the walls, floors and ceilings, and the lightmap loader
+lightmaps/        baked lighting (two 2048² pages and a manifest)
+tools/bake/       scene export (Playwright) and the Blender bake + encode scripts
 tools/build-artifact.mjs  packages the page for a Claude Artifact preview
 docs/             photos of the original floor-plan handout, one per floor
 ```
+
+### Rebaking the lighting
+
+After changing the building (anything in `src/layout.js` or `src/building.js`), the old lightmaps no longer match and the game quietly ignores them. To bake new ones you need Node, Playwright and Blender 4.x (or the `bpy` module from PyPI, which needs Python 3.11):
+
+```sh
+npm i -D playwright && npx playwright install chromium
+node tools/bake/export.mjs                               # writes tools/bake/out/scene.*
+blender -b -P tools/bake/bake.py -- tools/bake/out lightmaps 64
+# or: pip install bpy pillow numpy && python tools/bake/bake.py tools/bake/out lightmaps 64
+```
+
+The last number is Cycles samples per texel; 64 takes about an hour on a 4-core CPU. To rebalance the fixtures, sky and sun without baking again, run `python tools/bake/encode.py tools/bake/out lightmaps 0.38 1 1`.
 
 ### Fixing a room
 

@@ -10,6 +10,7 @@ export class GeoBuilder {
     this.col = [];
     this.idx = [];
     this.n = 0;
+    this.uv1 = null; // lightmap UVs, filled in by the lightmap packer
   }
 
   _v(x, y, z, nx, ny, nz, u, v, c) {
@@ -101,6 +102,7 @@ export class GeoBuilder {
     g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nor, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
     g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
+    if (this.uv1) g.setAttribute('uv1', new THREE.Float32BufferAttribute(this.uv1, 2));
     g.setIndex(this.n > 65535 ? new THREE.Uint32BufferAttribute(this.idx, 1) : new THREE.Uint16BufferAttribute(this.idx, 1));
     g.computeBoundingSphere();
     g.computeBoundingBox();

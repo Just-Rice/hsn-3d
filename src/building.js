@@ -8,6 +8,7 @@ import {
 } from './layout.js';
 import { Batches, subtractRects, hexToRGB, inRect, WHITE } from './geo.js';
 import { LabelAtlas, rng, textTexture } from './textures.js';
+import { packLightmaps } from './lightmap.js';
 
 const WT = 0.2; // interior wall thickness
 const SK = 0.32; // exterior brick skin thickness
@@ -88,6 +89,13 @@ export function buildBuilding(scene, world, T, M) {
   );
   const stairs = rooms.filter((r) => r.type === 'stair' && r.level === 0);
   const stairRects = stairs.map((s) => s.R);
+  // ceiling height seen from a point (Infinity where the space is open to the roof)
+  const ceilAt = (level, x, z) => {
+    const b = blockAt(x, z);
+    if (!b || stairRects.some((sr) => inRect(sr, x, z, 0.05))) return Infinity;
+    if (inRect(rectW(COURTYARD), x, z)) return Infinity;
+    return level === 1 ? CEIL2[1] : ceil0(b);
+  };
 
   const entrances = ENTRANCES.map((e) => {
     const horiz = e.dir === 'N' || e.dir === 'S';
@@ -287,8 +295,14 @@ export function buildBuilding(scene, world, T, M) {
         // extend full walls half a thickness into corners, never into an opening
         const p = pc.p - (solidFull && (!prev || prev.holes.length === 0) ? WT / 2 : 0);
         const q = pc.q + (solidFull && (!next || next.holes.length === 0) ? WT / 2 : 0);
+        // wall above the ceilings on both sides is never seen: keep it (for shadows) but
+        // out of the lightmapped batch
+        const [mx, mz] = P(g.axis, g.c, (pc.p + pc.q) / 2);
+        const off = WT / 2 + 0.25;
+        const split = Math.max(...(g.axis === 'z' ? [[mx, mz - off], [mx, mz + off]] : [[mx - off, mz], [mx + off, mz]]).map(([x, z]) => ceilAt(level, x, z))) + 0.02;
         for (const [s, e] of solidSpans(base, base + pc.h, pc.holes)) {
-          segBox(B.get('wall'), g.axis, g.c, p, q, -WT / 2, WT / 2, s, e, wallColor[level]);
+          if (s < split) segBox(B.get('wall'), g.axis, g.c, p, q, -WT / 2, WT / 2, s, Math.min(e, split), wallColor[level]);
+          if (e > split) segBox(B.get('wallHidden'), g.axis, g.c, p, q, -WT / 2, WT / 2, Math.max(s, split), e, wallColor[level]);
           segCollider(g.axis, g.c, p, q, -WT / 2, WT / 2, s, e);
           if (Math.abs(s - base) < 1e-3) {
             // vinyl base on both faces
@@ -433,11 +447,17 @@ export function buildBuilding(scene, world, T, M) {
   world.addTerrain(poolPit, () => -1.7);
   world.addTerrain(house, (x, z) => houseFloor(z));
 
+  // hallway floors: rooms draw their own floor on top, so leave those areas out
+  const roomFloors = (lv) => rooms.filter((rm) => rm.level === lv && rm.type !== 'stair').map((rm) => rm.R);
+  const floorHoles0 = [poolPit, house, ...roomFloors(0)];
   for (const { r } of blockRects)
-    for (const fr of subtractRects([r], [poolPit, house])) B.get('floorTile').hquad(fr[0], fr[1], fr[2], fr[3], 0.02, true);
+    for (const fr of subtractRects([r], floorHoles0)) B.get('floorTile').hquad(fr[0], fr[1], fr[2], fr[3], 0.02, true);
   const slabRects = subtractRects(level1Rects, stairRects);
+  const floorHoles1 = roomFloors(1);
   for (const r of slabRects) {
-    B.get('floorTile').box(r[0], LEVEL_H - SLAB, r[1], r[2], LEVEL_H + 0.02, r[3], hexToRGB('#f4f0e8'), 'YyxXzZ');
+    // the slab's underside sits above the 1st-floor ceiling, so only its top and edges are drawn
+    B.get('paint').box(r[0], LEVEL_H - SLAB, r[1], r[2], LEVEL_H + 0.02, r[3], hexToRGB('#d9d6cf'), 'xXzZ');
+    for (const fr of subtractRects([r], floorHoles1)) B.get('floorTile').hquad(fr[0], fr[1], fr[2], fr[3], LEVEL_H + 0.02, true, hexToRGB('#f4f0e8'));
     world.add(r[0], LEVEL_H - SLAB, r[1], r[2], LEVEL_H, r[3], 4);
   }
   rooms.forEach((rm, i) => {
@@ -506,12 +526,12 @@ export function buildBuilding(scene, world, T, M) {
     const rects = b.levels === 2 ? subtractRects([r], stairRects) : [r];
     const tall = y > 5;
     for (const cr of rects) {
-      B.get(tall ? 'deck' : 'ceiling').box(cr[0], y, cr[1], cr[2], y + 0.08, cr[3], WHITE, 'yY');
+      B.get(tall ? 'deck' : 'ceiling').box(cr[0], y, cr[1], cr[2], y + 0.08, cr[3], WHITE, 'y');
       world.add(cr[0], y, cr[1], cr[2], y + 0.08, cr[3], 6);
       addLights(cr, y, tall ? 7 : 4.2);
     }
     if (b.levels === 2) {
-      B.get('ceiling').box(r[0], CEIL2[1], r[1], r[2], CEIL2[1] + 0.08, r[3], WHITE, 'yY');
+      B.get('ceiling').box(r[0], CEIL2[1], r[1], r[2], CEIL2[1] + 0.08, r[3], WHITE, 'y');
       world.add(r[0], CEIL2[1], r[1], r[2], CEIL2[1] + 0.08, r[3], 6);
       addLights(r, CEIL2[1]);
     }
@@ -696,14 +716,26 @@ export function buildBuilding(scene, world, T, M) {
   // ------------------------------------------------------------------ meshes
   const materials = {
     ...M,
+    wallHidden: M.wall,
     sign: new THREE.MeshStandardMaterial({ map: atlas.texture, roughness: 0.45, emissive: '#ffffff', emissiveMap: atlas.texture, emissiveIntensity: 0.35 }),
   };
   materials.sign.userData.noShadow = true;
+  // lightmap UVs for the big surfaces; each atlas page gets its own copy of the material
+  const lightmap = packLightmaps(B);
+  const lightmapped = [];
+  for (const key of B.map.keys()) {
+    const at = key.indexOf('@');
+    if (at < 0) continue;
+    const mat = materials[key.slice(0, at)].clone();
+    materials[key] = mat;
+    lightmapped.push({ mat, page: +key.slice(at + 1) });
+  }
   for (const m of B.toMeshes(materials)) scene.add(m);
 
   const zones = ZONES.map((z) => ({ ...z, R: rectW(z.r) }));
   return {
     rooms, stairs: stairInfo, blocks, blockRects, zones, entrances, mapWalls, water, poolPit, house, atlas, windows,
     courtyard: rectW(COURTYARD), level1Rects, slabRects, updateDoors, blockAt, materials, lightCenters,
+    lightmap, lightmapped,
   };
 }
