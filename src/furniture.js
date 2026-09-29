@@ -77,6 +77,60 @@ function booksTexture() {
   return t;
 }
 
+// Cafeteria round table: laminate top on a pedestal, with four curved bench seats on
+// arms from the base, and gaps between the benches to get in and out.
+function roundTableGeo() {
+  const parts = [];
+  const add = (geo, color, y = 0) => {
+    const g = geo.index ? geo.toNonIndexed() : geo;
+    g.translate(0, y, 0);
+    const c = new THREE.Color(color), n = g.attributes.position.count;
+    const col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], i * 3);
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    parts.push(g);
+  };
+  add(new THREE.CylinderGeometry(0.76, 0.76, 0.035, 40), '#3d4147', 0.735); // edge band
+  add(new THREE.CylinderGeometry(0.745, 0.745, 0.012, 40), '#ece6d6', 0.757); // laminate top
+  add(new THREE.CylinderGeometry(0.055, 0.07, 0.72, 14), '#8a8f95', 0.36);
+  add(new THREE.CylinderGeometry(0.3, 0.34, 0.04, 20), '#6f757b', 0.02);
+  for (let k = 0; k < 4; k++) {
+    const mid = Math.PI / 4 + (k * Math.PI) / 2, span = Math.PI / 3;
+    // seat: annulus sector, extruded 5 cm
+    const sh = new THREE.Shape();
+    const r0 = 0.95, r1 = 1.27, a0 = mid - span / 2, a1 = mid + span / 2;
+    sh.absarc(0, 0, r1, a0, a1, false);
+    sh.absarc(0, 0, r0, a1, a0, true);
+    const seat = new THREE.ExtrudeGeometry(sh, { depth: 0.05, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.015, bevelSegments: 2, curveSegments: 16 });
+    seat.rotateX(Math.PI / 2); // shape (x, y) -> world (x, z); the 5 cm extrusion points down
+    add(seat, '#2a55b8', 0.47);
+    // arm from the pedestal out to the seat, and a foot under the seat
+    const arm = new THREE.BoxGeometry(1.1, 0.05, 0.06);
+    arm.translate(0.55, 0, 0);
+    arm.rotateY(-mid);
+    add(arm, '#8a8f95', 0.39);
+    const foot = new THREE.CylinderGeometry(0.03, 0.035, 0.39, 8);
+    foot.translate(Math.cos(mid) * 1.1, 0, Math.sin(mid) * 1.1);
+    add(foot, '#8a8f95', 0.195);
+  }
+  // concatenate (all non-indexed, same attributes)
+  const names = ['position', 'normal', 'uv', 'color'];
+  const out = new THREE.BufferGeometry();
+  for (const name of names) {
+    const size = parts[0].attributes[name].itemSize;
+    const total = parts.reduce((s, g) => s + g.attributes[name].count, 0);
+    const arr = new Float32Array(total * size);
+    let o = 0;
+    for (const g of parts) {
+      arr.set(g.attributes[name].array, o);
+      o += g.attributes[name].array.length;
+    }
+    out.setAttribute(name, new THREE.BufferAttribute(arr, size));
+  }
+  out.computeBoundingSphere();
+  return out;
+}
+
 function protoGeo(fn) {
   const g = new GeoBuilder();
   fn(g);
@@ -117,14 +171,7 @@ export function buildFurniture(scene, world, info, T, M) {
     g.box(-0.27, 0, -0.1, -0.24, 0.65, 0.2, C('#2b2b2b'));
     g.box(0.24, 0, -0.1, 0.27, 0.65, 0.2, C('#2b2b2b'));
   }), vc);
-  props.define('cafTable', protoGeo((g) => {
-    g.box(-1.2, 0.72, -0.4, 1.2, 0.76, 0.4, C('#e8e2d2'));
-    g.box(-1.1, 0, -0.05, 1.1, 0.72, 0.05, C('#8a8f95'));
-    for (const zz of [-0.72, 0.72]) {
-      g.box(-1.15, 0.43, zz - 0.14, 1.15, 0.47, zz + 0.14, C('#2a55b8'));
-      g.box(-1.0, 0, zz - 0.04, 1.0, 0.43, zz + 0.04, C('#8a8f95'));
-    }
-  }), vc);
+  props.define('roundTable', roundTableGeo(), vc);
   // locker unit: 0.31 wide, 1.85 tall, 0.4 deep; front = local +z
   {
     const c = document.createElement('canvas');
@@ -414,15 +461,33 @@ export function buildFurniture(scene, world, info, T, M) {
         break;
       }
       case 'dining': {
-        // tables in rows with walkable gaps; benches are low enough to step over
+        // round tables with four curved benches each, in staggered rows; about 0.9 m
+        // between neighboring benches, and the benches are low enough to step over
         const f = frameOf(rm, 'W');
-        for (let v = 2.8; v < f.D - 1.8; v += 3.6)
-          for (let u = 2.2; u < f.W - 1.8; u += 3.4) {
-            if (nearDoor(rm, ...f.at(u, v), 2.6)) continue;
-            place('cafTable', f, u, v, y, Math.PI / 2);
-            fcollide(f, u - 0.4, u + 0.4, v - 1.2, v + 1.2, y, y + 0.76);
-            for (const s of [-1, 1]) fcollide(f, u + s * 0.72 - 0.14, u + s * 0.72 + 0.14, v - 1.15, v + 1.15, y, y + 0.47);
+        const pitch = 3.5, rowPitch = 3.1;
+        for (let row = 0, v = 2.3; v < f.D - 1.9; v += rowPitch, row++)
+          for (let u = 2.3 + (row % 2 ? pitch / 2 : 0); u < f.W - 1.9; u += pitch) {
+            const [x, z] = f.at(u, v);
+            if (nearDoor(rm, x, z, 2.9)) continue;
+            const rot = (row % 2 ? Math.PI / 4 : 0) + (R() - 0.5) * 0.2;
+            props.add('roundTable', x, y, z, rot);
+            world.add(x - 0.55, y, z - 0.55, x + 0.55, y + 0.76, z + 0.55, 9);
+            // bench seats: a small low box at the middle of each arc
+            for (let k = 0; k < 4; k++) {
+              const a = Math.PI / 4 + (k * Math.PI) / 2 - rot; // local angle -> world (rotation.y turns it by -rot)
+              const bx = x + Math.cos(a) * 1.11, bz = z + Math.sin(a) * 1.11;
+              world.add(bx - 0.3, y, bz - 0.3, bx + 0.3, y + 0.47, bz + 0.3, 9);
+            }
           }
+        // hanging banner naming the hall, on the wall across from the entrance
+        const abbr = rm.label, words = rm.name.toUpperCase().split(' ');
+        const [bx0, , bx1, bz1] = rm.R;
+        banner((bx0 + bx1) / 2, 4.0, bz1 - 0.16, Math.PI, [
+          { text: abbr, size: 0.3 },
+          { text: words.slice(0, 2).join(' '), size: 0.13 },
+          { text: words.slice(2).join(' '), size: 0.13 },
+          { text: 'GO KNIGHTS', size: 0.09, color: '#d5dde8' },
+        ], 1.9, 2.5);
         break;
       }
       case 'kitchen': {

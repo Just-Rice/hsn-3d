@@ -328,7 +328,8 @@ const SPOTS = () => {
     { name: 'Theatre stage', sub: 'Face the house', p: st, yaw: 0 },
     { name: 'Pool deck', sub: 'Indoor 25-yard pool', p: [wx(860), 0, wz(728)], yaw: 0 },
     { name: 'Main Gym', sub: 'Center court', p: c(room('Main Gym')), yaw: 0 },
-    { name: 'Student Dining', sub: 'Upper dining', p: c(room('Upper Student Dining')), yaw: 0 },
+    { name: 'Upper Dining Hall', sub: 'UDH', p: c(room('Upper Dining Hall')), yaw: 0 },
+    { name: 'Lower Dining Hall', sub: 'LDH', p: c(room('Lower Dining Hall')), yaw: 0 },
     { name: 'A-Wing, 2nd floor', sub: 'Hallway by A203', p: [wx(363), LEVEL_H, wz(300)], yaw: Math.PI },
     { name: '200s Hallway', sub: '2nd floor, by 214', p: [wx(520), LEVEL_H, wz(535)], yaw: -Math.PI / 2 },
     { name: 'Football stadium', sub: '50-yard line, facing the home stands', p: [s.x - 12, 0, s.z], yaw: -Math.PI / 2 },
@@ -386,7 +387,7 @@ function locate() {
     const rm = info.rooms.find((r) => r.level === lv && inRect(r.R, x, z));
     if (rm) {
       where = rm.type === 'stair' ? 'Stairwell' : rm.label && !rm.big && /\d/.test(rm.label) ? 'Room ' + rm.label : rm.name;
-      sub = { class: 'Classroom', lab: 'Lab classroom', art: 'Art room', music: 'Music room', lecture: 'Tiered lecture hall', office: 'Office', lav: 'Restroom', locker: 'Locker room', storage: 'Storage', kitchen: 'Kitchen', gym: 'Gymnasium', pool: 'Natatorium', theatre: 'Auditorium', dining: 'Cafeteria', media: 'Library', weights: 'Weight room' }[rm.type] || '';
+      sub = (abbr(rm) ? abbr(rm) + ' · ' : '') + ({ class: 'Classroom', lab: 'Lab classroom', art: 'Art room', music: 'Music room', lecture: 'Tiered lecture hall', office: 'Office', lav: 'Restroom', locker: 'Locker room', storage: 'Storage', kitchen: 'Kitchen', gym: 'Gymnasium', pool: 'Natatorium', theatre: 'Auditorium', dining: 'Cafeteria', media: 'Library', weights: 'Weight room' }[rm.type] || '');
       if (rm.label && rm.type !== 'stair') {
         const key = rm.level + ':' + rm.label;
         if (!visited.has(key)) {
@@ -454,6 +455,8 @@ function labelTexture(text) {
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
+// short names people actually use, like UDH / LDH for the dining halls
+const abbr = (rm) => (rm.big && /^[A-Z]{2,4}$/.test(rm.label || '') ? rm.label : '');
 const roomTitle = (rm) => (rm.label && !rm.big && /\d/.test(rm.label) ? 'Room ' + rm.label : rm.name);
 
 function setDestination(rm) {
@@ -785,7 +788,7 @@ $$('#mapfloor button').forEach((b) =>
 
 // --- find
 const ALIASES = {
-  library: 'Media Center', cafeteria: 'Dining', lunch: 'Dining', auditorium: 'Theatre', stage: 'Theatre', bathroom: 'Restroom', toilet: 'Restroom',
+  library: 'Media Center', cafeteria: 'Dining', lunch: 'Dining', 'dining hall': 'Dining', auditorium: 'Theatre', stage: 'Theatre', bathroom: 'Restroom', toilet: 'Restroom',
   nurse: 'Nurse', guidance: 'Guidance', counselor: 'Guidance', swim: 'Pool', natatorium: 'Pool', office: 'Office', weights: 'Weight', gym: 'Gym', locker: 'Locker',
 };
 function renderFind(q) {
@@ -815,7 +818,7 @@ function renderFind(q) {
   for (const r of res) {
     const b = document.createElement('button');
     b.className = 'item' + (visited.has(r.level + ':' + r.label) ? ' visited' : '');
-    b.innerHTML = `${roomTitle(r)}<small>${r.level ? '2nd floor' : '1st floor'}</small>`;
+    b.innerHTML = `${roomTitle(r)}<small>${abbr(r) ? abbr(r) + ' · ' : ''}${r.level ? '2nd floor' : '1st floor'}</small>`;
     b.addEventListener('click', () => setDestination(r));
     list.appendChild(b);
   }

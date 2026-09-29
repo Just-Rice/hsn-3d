@@ -42,7 +42,7 @@ export const BLOCKS = [
   { id: 'stage', name: 'Stage', levels: 1, ceil: 14, roof: 15, windows: false, rects: [[363, 990, 526, 1100]] },
   { id: 'backstage', name: 'Backstage', levels: 1, ceil: 4.5, roof: 5.5, rects: [[363, 1100, 526, 1175]] },
   { id: 'e300', name: '300s', levels: 1, ceil: 3.6, roof: 4.8, rects: [[526, 798, 621, 1183]] },
-  { id: 'dining', name: 'Student Dining', levels: 1, ceil: 5.5, roof: 6.5, rects: [[661, 798, 771, 990], [876, 798, 988, 967]] },
+  { id: 'dining', name: 'Dining Halls', levels: 1, ceil: 5.5, roof: 6.5, rects: [[661, 798, 771, 990], [876, 798, 988, 967]] },
   { id: 'kitchen', name: 'Kitchen', levels: 1, ceil: 3.6, roof: 4.8, rects: [[771, 798, 876, 967], [771, 967, 929, 990], [732, 990, 929, 1105]] },
   { id: 'connector', name: 'Gym Connector', levels: 1, ceil: 3.2, roof: 4.2, rects: [[988, 826, 1027, 862]] },
   { id: 'pool', name: 'Natatorium', levels: 1, ceil: 8.0, roof: 9.0, windows: false, rects: [[752, 576, 962, 750]] },
@@ -163,9 +163,10 @@ export const ROOMS = [
     R('310', [543, 1100, 621, 1130], 'class', ['W']),
     R('', [543, 1130, 621, 1183], 'storage', ['W'], { name: 'Storage' }),
     // --- dining
-    R('Upper Dining', [661, 798, 771, 990], 'dining', ['N:0.5:2.4', 'E:0.2:2.0'], { name: 'Upper Student Dining', big: true }),
+    // the plan's "upper/lower student dining" are the Upper and Lower Dining Halls (UDH, LDH)
+    R('UDH', [661, 798, 771, 990], 'dining', ['N:0.5:2.4', 'E:0.2:2.0'], { name: 'Upper Dining Hall', big: true }),
     R('', [771, 798, 876, 967], 'kitchen', ['W:0.2:2.0', 'E:0.2:2.0', 'N:0.5:2.0', 'S:0.5'], { name: 'Serving Line' }),
-    R('Lower Dining', [876, 798, 988, 967], 'dining', ['N:0.5:2.4', 'W:0.2:2.0', 'E:0.27:2.0'], { name: 'Lower Student Dining', big: true }),
+    R('LDH', [876, 798, 988, 967], 'dining', ['N:0.5:2.4', 'W:0.2:2.0', 'E:0.27:2.0'], { name: 'Lower Dining Hall', big: true }),
     R('', [771, 967, 929, 1105], 'kitchen', ['N:0.3'], { name: 'Kitchen' }),
     R('', [732, 990, 771, 1105], 'storage', ['E:0.5'], { name: 'Kitchen Storage' }),
     // --- pool + lockers

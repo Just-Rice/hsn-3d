@@ -47,7 +47,7 @@ Settings → Pages → *Deploy from a branch* → `main` / `(root)`. The game is
 
 **Floor plans.** Each photo in [`docs/`](docs/) is one floor:
 
-- `floorplan-first-floor.jpg` is the **1st floor**: the A100s, the 100s, 300s and 400s, Main Hall, Media Center, Main Office, theatre, 300 lecture hall, student dining, pool, main and auxiliary gyms.
+- `floorplan-first-floor.jpg` is the **1st floor**: the A100s, the 100s, 300s and 400s, Main Hall, Media Center, Main Office, theatre, 300 lecture hall, the Upper and Lower Dining Halls (UDH and LDH, "upper/lower student dining" on the plan), pool, main and auxiliary gyms.
 - `floorplan-second-floor.jpg` is the **2nd floor**: the A200s and rooms 200–229.
 
 Every room is transcribed in [`src/layout.js`](src/layout.js) as rectangles in "plan units" (pixels measured on a de-skewed photo of the first-floor sheet), converted to meters with `S = 0.18 m/unit`. That scale was fitted to the satellite footprint: the whole building comes out about 225 × 180 m and the academic wing about 98 × 83 m, the same as on the photo. The Main Hall is widened to about 12 m, and everything below it on the plan sheet is shifted down to make room. Doors are listed per room (`'E:0.3:2.0'` = east wall, 30% along, 2 m wide). The walls, door and window openings, floors, ceilings, brick exterior, roofs and stairs are all generated from that data.
@@ -74,7 +74,7 @@ Every room is transcribed in [`src/layout.js`](src/layout.js) as rectangles in "
 ### What's approximate
 
 - The plans are photocopies with no scale bar, so dimensions are fitted, not surveyed.
-- Rooms the plans leave unlabeled are named generically (Office, Storage, Restroom), and furniture is a best guess (classroom desks, lab benches, lockers along the hallways).
+- Rooms the plans leave unlabeled are named generically (Office, Storage, Restroom), and furniture is mostly a best guess (classroom desks, lab benches, lockers along the hallways). The dining halls have round tables with curved benches, as they did in real life.
 - I couldn't find a readable photo or description of the facade, so the look is a guess: red-brown brick wings with window bands and a light stone coping. The flat roofs, one- and two-story massing and tall gym, theatre and natatorium volumes come from the plans.
 - The site is traced by eye from one satellite image, so positions are good to a few meters. Community Middle School is a simple stand-in block, and cars, buses and trees are placed to look like the photo rather than copied one by one.
 - The map and minimap use true north (the top of the paper plans points west).
