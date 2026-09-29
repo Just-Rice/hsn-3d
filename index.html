@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>WW-P North 3D</title>
+<meta name="description" content="Walk through West Windsor-Plainsboro High School North in 3D, rebuilt from the original floor plans." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Graduate&family=Barlow:wght@400;600;700&display=swap" />
+<style>
+  /* Layout: a full-bleed 3D view with HUD pinned to the corners — where-am-I top-left,
+     minimap + tools top-right, route banner bottom-center. One committed look: midnight-navy
+     glass panels in Knights royal blue with silver trim, varsity lettering for names. */
+  :root {
+    --bg: #0a0e18;
+    --panel: rgba(10, 16, 32, 0.82);
+    --panel-strong: rgba(10, 16, 32, 0.95);
+    --ink: #eef2f8;
+    --muted: #aab5c6;
+    --brand: #1f45a8;
+    --brand-hi: #2d5bd0;
+    --accent: #d5dde8;
+    --brand-lite: #8fb0ff;
+    --line: rgba(197, 208, 222, 0.34);
+    --route: #ff4d6d;
+    --keycap: rgba(255, 255, 255, 0.12);
+    --scrim: rgba(3, 6, 14, 0.6);
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    --display: "Graduate", "Rockwell", Georgia, serif;
+    --ui: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --safe-t: env(safe-area-inset-top, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  .btn .ico { display: none; font-size: 17px; line-height: 1; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body { background: var(--bg); color: var(--ink); font: 15px/1.4 var(--ui); -webkit-user-select: none; user-select: none; touch-action: none; }
+  canvas#view { position: fixed; inset: 0; display: block; width: 100%; height: 100%; outline: none; }
+  .hud { position: fixed; pointer-events: none; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  kbd { font: 700 11px var(--mono); background: var(--keycap); border-radius: 5px; padding: 1px 6px; color: var(--accent); white-space: nowrap; }
+
+  #loc { top: calc(14px + var(--safe-t)); left: 14px; padding: 10px 14px; min-width: 200px; max-width: min(380px, 60vw); }
+  #loc .where { font: 400 18px/1.15 var(--display); letter-spacing: 0.3px; text-wrap: balance; }
+  #loc .sub { font-size: 13px; color: var(--muted); margin-top: 5px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  #loc .pill { background: var(--brand); color: var(--accent); border-radius: 999px; padding: 1px 9px; font-weight: 700; font-size: 12px; letter-spacing: 0.4px; text-transform: uppercase; }
+  #loc .count { font-variant-numeric: tabular-nums; }
+
+  #mini { top: calc(12px + var(--safe-t)); right: 12px; width: 176px; height: 176px; border-radius: 50%; box-shadow: var(--shadow); }
+  #tools { top: calc(198px + var(--safe-t)); right: 12px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+  .btn { pointer-events: auto; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 10px; padding: 7px 11px; font: 600 14px var(--ui); display: inline-flex; align-items: center; gap: 8px; box-shadow: var(--shadow); }
+  .btn:hover { background: var(--panel-strong); border-color: var(--accent); }
+  .btn:focus-visible, .item:focus-visible, .seg button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn.primary { background: var(--brand); border-color: var(--accent); }
+  .btn.primary:hover { background: var(--brand-hi); }
+  .btn:disabled { opacity: 0.6; cursor: progress; }
+
+  #navbar { left: 50%; transform: translateX(-50%); bottom: calc(18px + var(--safe-b)); padding: 9px 10px 9px 16px; align-items: center; gap: 14px; pointer-events: auto; max-width: calc(100vw - 32px); display: flex; }
+  #navbar .t { font-weight: 700; }
+  #navbar .t b { color: var(--route); }
+  #navbar .d { font-size: 13px; color: var(--muted); }
+  #toast { left: 50%; top: 18%; transform: translateX(-50%); padding: 12px 18px; font: 400 18px var(--display); opacity: 0; transition: opacity 0.35s; text-align: center; max-width: calc(100vw - 32px); }
+  #toast.on { opacity: 1; }
+  #crosshair { left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: var(--ink); opacity: 0.8; }
+  #help { left: 14px; bottom: calc(14px + var(--safe-b)); padding: 10px 14px; font-size: 13px; line-height: 1.7; color: var(--muted); }
+  #help b { color: var(--accent); font-weight: 700; }
+  #fps { left: 16px; top: calc(96px + var(--safe-t)); font: 11px var(--mono); color: var(--muted); }
+
+  .overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: var(--scrim); z-index: 10; padding: calc(16px + var(--safe-t)) 16px calc(16px + var(--safe-b)); }
+  .overlay.on { display: flex; }
+  .sheet { width: min(1000px, 100%); max-height: 100%; overflow: auto; padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 10px; }
+  .sheet h2 { margin: 0; font: 400 22px var(--display); letter-spacing: 0.3px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .spacer { flex: 1; }
+  .muted { color: var(--muted); font-size: 14px; }
+  #bigmap { width: 100%; height: auto; max-width: 100%; border-radius: 10px; border: 1px solid var(--line); cursor: crosshair; display: block; touch-action: pan-x pan-y; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; pointer-events: auto; }
+  .seg button { border: 0; background: transparent; color: var(--ink); padding: 7px 12px; font: 600 14px var(--ui); cursor: pointer; }
+  .seg button.on { background: var(--brand); color: var(--accent); }
+  input[type="search"] { width: 100%; padding: 11px 13px; border-radius: 10px; border: 1px solid var(--line); background: var(--keycap); color: var(--ink); font: 16px var(--ui); outline: none; }
+  .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
+  .item { text-align: left; border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; background: transparent; color: var(--ink); cursor: pointer; font: 600 15px var(--ui); min-width: 0; }
+  .item:hover { border-color: var(--accent); background: var(--keycap); }
+  .item small { display: block; color: var(--muted); font-weight: 400; font-size: 12.5px; margin-top: 2px; }
+  .item.visited small::after { content: " · visited"; color: var(--accent); }
+
+  #start { background: radial-gradient(ellipse at 30% 20%, rgba(31, 69, 168, 0.5), var(--scrim) 70%); }
+  #start .card { width: min(580px, 100%); padding: 26px 26px 22px; display: flex; flex-direction: column; gap: 14px; }
+  #start .eyebrow { font: 700 12px var(--ui); letter-spacing: 3px; color: var(--accent); text-transform: uppercase; }
+  #start h1 { margin: 0; font: 400 clamp(26px, 5.2vw, 36px)/1.08 var(--display); color: var(--ink); text-wrap: balance; }
+  #start h1 span { color: var(--brand-lite); }
+  #start .lede { color: var(--muted); font-size: 16px; max-width: 46ch; }
+  #start .keys { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 15px; }
+  #start .actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  #start .go { font-size: 17px; padding: 11px 24px; }
+  #loadbar { flex: 1; min-width: 140px; height: 6px; background: var(--keycap); border-radius: 99px; overflow: hidden; }
+  #loadbar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
+  #loadmsg { font-size: 13px; color: var(--muted); min-height: 18px; }
+
+  .swatches { display: grid; grid-template-columns: 96px 1fr; gap: 10px 12px; align-items: center; }
+  .sw { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .sw button { width: 28px; height: 28px; border-radius: 8px; border: 2px solid transparent; cursor: pointer; }
+  .sw button.on { border-color: var(--accent); }
+  .sw input[type="color"] { width: 34px; height: 28px; border: 0; background: none; padding: 0; cursor: pointer; }
+  label.check { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 14px; }
+
+  #touch { position: fixed; inset: 0; pointer-events: none; display: none; }
+  #touch.on { display: block; }
+  #joy { position: fixed; left: 22px; bottom: calc(26px + var(--safe-b)); width: 128px; height: 128px; border-radius: 50%; background: var(--scrim); border: 2px solid var(--line); pointer-events: auto; touch-action: none; }
+  #joy i { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px; border-radius: 50%; background: var(--accent); opacity: 0.85; }
+  #tbtns { position: fixed; right: 18px; bottom: calc(26px + var(--safe-b)); display: flex; gap: 12px; pointer-events: auto; }
+  #tbtns button { width: 64px; height: 64px; border-radius: 50%; border: 2px solid var(--line); background: var(--scrim); color: var(--ink); font: 700 13px var(--ui); touch-action: none; }
+  #tbtns button.on { background: var(--accent); color: var(--bg); }
+
+  @media (max-width: 700px) {
+    #mini { width: 128px; height: 128px; }
+    #tools { top: calc(150px + var(--safe-t)); }
+    #tools .btn .lbl, #tools .btn kbd { display: none; }
+    #tools .btn .ico { display: inline; }
+    #help { display: none; }
+    #loc { max-width: calc(100vw - 172px); padding: 8px 11px; min-width: 0; }
+    #loc .where { font-size: 15px; }
+    #navbar { bottom: calc(170px + var(--safe-b)); }
+  }
+  @media (prefers-reduced-motion: reduce) { #toast, #loadbar i { transition: none; } }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.min.js" } }
+</script>
+</head>
+<body>
+<canvas id="view" tabindex="0" aria-label="3D view of the school"></canvas>
+
+<div id="loc" class="hud panel"><div class="where">Loading…</div><div class="sub"></div></div>
+<canvas id="mini" class="hud" width="352" height="352" aria-label="Minimap"></canvas>
+<div id="tools" class="hud">
+  <button class="btn" data-act="map" title="Campus map (M)"><span class="lbl">Map</span> <kbd>M</kbd><span class="ico">⌖</span></button>
+  <button class="btn" data-act="find" title="Find a room (F)"><span class="lbl">Find a room</span> <kbd>F</kbd><span class="ico">⌕</span></button>
+  <button class="btn" data-act="tp" title="Quick travel (T)"><span class="lbl">Quick travel</span> <kbd>T</kbd><span class="ico">⇢</span></button>
+  <button class="btn" data-act="view" title="Switch camera (V)"><span class="lbl">Camera</span> <kbd>V</kbd><span class="ico">◎</span></button>
+  <button class="btn" data-act="char" title="Your character (C)"><span class="lbl">Character</span> <kbd>C</kbd><span class="ico">☺</span></button>
+</div>
+<div id="navbar" class="hud panel" hidden><div><div class="t"></div><div class="d"></div></div><button class="btn" id="navcancel">Stop</button></div>
+<div id="toast" class="hud panel"></div>
+<div id="crosshair" class="hud" hidden></div>
+<div id="help" class="hud panel">
+  <b>WASD</b> walk · <b>Shift</b> run · <b>Space</b> jump<br />
+  <b>Mouse</b> look (click the view) · <b>Wheel</b> zoom<br />
+  <b>M</b> map · <b>F</b> find a room · <b>T</b> travel · <b>H</b> hide this
+</div>
+<div id="fps" class="hud"></div>
+
+<div id="start" class="overlay on">
+  <div class="card panel">
+    <div class="eyebrow">Home of the Northern Knights · Est. 1997</div>
+    <h1>West Windsor-Plainsboro <span>High School North</span></h1>
+    <div class="lede">Walk the halls again. Every room from the first- and second-floor plans, from A100 to 229, plus the theatre, the pool, the gyms and the football field out back.</div>
+    <div class="keys">
+      <kbd>W A S D</kbd><span>Walk (arrow keys work too)</span>
+      <kbd>Shift</kbd><span>Run</span>
+      <kbd>Space</kbd><span>Jump</span>
+      <kbd>Mouse</kbd><span>Look around (click the view to capture the mouse)</span>
+      <kbd>M · F · T</kbd><span>Map, find a room, quick travel</span>
+      <kbd>V</kbd><span>Switch between first and third person</span>
+    </div>
+    <div class="actions"><button class="btn primary go" id="go" disabled>Loading…</button><div id="loadbar"><i></i></div></div>
+    <div id="loadmsg"></div>
+  </div>
+</div>
+
+<div id="mapov" class="overlay">
+  <div class="sheet panel">
+    <div class="row">
+      <h2>Campus map</h2>
+      <div class="spacer"></div>
+      <div class="seg" id="mapfloor"><button data-lv="0" class="on">1st floor</button><button data-lv="1">2nd floor</button></div>
+      <button class="btn" data-close>Close</button>
+    </div>
+    <div class="muted">Click a room for walking directions. Double-click to go there instantly.</div>
+    <canvas id="bigmap"></canvas>
+  </div>
+</div>
+
+<div id="findov" class="overlay">
+  <div class="sheet panel">
+    <div class="row"><h2>Find a room</h2><div class="spacer"></div><button class="btn" data-close>Close</button></div>
+    <div class="muted">Type a room number like 214, A104 or 305, or a place like theatre, pool, gym or office.</div>
+    <input id="findq" type="search" placeholder="Search rooms" autocomplete="off" />
+    <div class="list" id="findres"></div>
+  </div>
+</div>
+
+<div id="tpov" class="overlay">
+  <div class="sheet panel">
+    <div class="row"><h2>Quick travel</h2><div class="spacer"></div><button class="btn" data-close>Close</button></div>
+    <div class="list" id="tplist"></div>
+  </div>
+</div>
+
+<div id="charov" class="overlay">
+  <div class="sheet panel" style="width:min(520px,100%)">
+    <div class="row"><h2>Your character</h2><div class="spacer"></div><button class="btn" data-close>Done</button></div>
+    <div class="swatches" id="charsw"></div>
+    <div class="row"><button class="btn" id="charreset">Reset to blue and silver</button><div class="spacer"></div>
+      <label class="check"><input type="checkbox" id="optshadow" /> Sun shadows</label></div>
+  </div>
+</div>
+
+<div id="touch"><div id="joy"><i></i></div><div id="tbtns"><button id="tsprint">RUN</button><button id="tjump">JUMP</button></div></div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
