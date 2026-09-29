@@ -6,8 +6,8 @@ export function makeMaterials(T) {
   const std = (o) => new THREE.MeshStandardMaterial(o);
   const n = (s) => new THREE.Vector2(s, s);
   const M = {
-    wall: std({ map: T.block, normalMap: T.blockN, normalScale: n(0.55), vertexColors: true, roughness: 0.82 }),
-    brick: std({ map: T.brick, normalMap: T.brickN, normalScale: n(1.0), roughness: 0.9 }),
+    wall: std({ map: T.block, normalMap: T.blockN, normalScale: n(1.0), vertexColors: true, roughness: 0.78 }),
+    brick: std({ map: T.brick, normalMap: T.brickN, normalScale: n(1.3), roughness: 0.88 }),
     floorTile: std({ map: T.tile, normalMap: T.tileN, normalScale: n(0.35), vertexColors: true, roughness: 0.26 }),
     carpet: std({ map: T.carpet, normalMap: T.carpetN, normalScale: n(0.7), vertexColors: true, roughness: 1.0 }),
     wood: std({ map: T.wood, normalMap: T.woodN, normalScale: n(0.45), vertexColors: true, roughness: 0.24 }),

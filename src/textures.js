@@ -103,61 +103,106 @@ export function makeTextures() {
     if (sf.normal) T[name + 'N'] = sf.normal;
   };
 
-  // --- Brick (running bond), 2.4m tile
+  // --- Brick (running bond), 2.4 m tile: modular 20 x 6.7 cm courses. The mortar is the
+  // same color as the brick (painted over or brick-toned), so a joint is just a shallow
+  // tooled groove that catches a little shadow.
   {
-    const rows = 36, cols = 12, S = 512, bh = S / rows, bw = S / cols;
-    const base = ['#8a3f2e', '#94472f', '#7e392a', '#9a4f36', '#733325', '#a0553a', '#86412f'];
+    const rows = 36, cols = 12, S = 1024, bh = S / rows, bw = S / cols;
+    const base = ['#8c4030', '#934632', '#86402e', '#974b35', '#8a3d2d', '#90452f'];
     const tones = [];
-    for (let y = 0; y < rows; y++) for (let x = -1; x <= cols; x++) tones.push(shade(base[Math.floor(r() * base.length)], (r() - 0.5) * 0.07));
-    put('brick', surface(S, 2.4, (g) => {
-      g.fillStyle = '#b3a592';
-      g.fillRect(0, 0, S, S);
+    for (let y = 0; y < rows; y++) for (let x = -1; x <= cols; x++) tones.push(shade(base[Math.floor(r() * base.length)], (r() - 0.5) * 0.045));
+    const bricks = (g, fn) => {
       let k = 0;
       for (let y = 0; y < rows; y++) {
         const off = (y % 2) * bw * 0.5;
-        for (let x = -1; x <= cols; x++) {
-          g.fillStyle = tones[k++];
-          g.fillRect(x * bw + off + 1.4, y * bh + 1.4, bw - 2.8, bh - 2.8);
-        }
+        for (let x = -1; x <= cols; x++) fn(x * bw + off, y * bh, k++);
       }
-      speckle(g, S, S, 6000, ['rgba(0,0,0,0.14)', 'rgba(255,230,200,0.08)'], r);
-    }, (g) => {
-      g.fillStyle = '#303030';
-      g.fillRect(0, 0, S, S);
+    };
+    const joints = (g, w, style) => {
+      g.strokeStyle = style;
+      g.lineWidth = w;
+      g.beginPath();
+      for (let y = 0; y <= rows; y++) { g.moveTo(0, y * bh); g.lineTo(S, y * bh); }
       for (let y = 0; y < rows; y++) {
         const off = (y % 2) * bw * 0.5;
-        for (let x = -1; x <= cols; x++) {
-          g.fillStyle = '#c8c8c8';
-          g.fillRect(x * bw + off + 1.6, y * bh + 1.6, bw - 3.2, bh - 3.2);
-        }
+        for (let x = -1; x <= cols; x++) { g.moveTo(x * bw + off, y * bh); g.lineTo(x * bw + off, (y + 1) * bh); }
       }
-      noise(g, S, S, 9000, r, 0.2);
-    }, 3));
+      g.stroke();
+    };
+    put('brick', surface(S, 2.4, (g) => {
+      g.fillStyle = '#8b422f';
+      g.fillRect(0, 0, S, S);
+      bricks(g, (x, y, k) => {
+        g.fillStyle = tones[k];
+        g.fillRect(x, y, bw, bh);
+      });
+      // fired-clay mottling and grit
+      speckle(g, S, S, 26000, ['rgba(0,0,0,0.10)', 'rgba(60,20,10,0.12)', 'rgba(255,215,180,0.06)'], r, 1, 3);
+      // the groove reads a touch darker than the face, but it is the same color
+      joints(g, 5, 'rgba(70,25,15,0.16)');
+      joints(g, 2, 'rgba(40,12,8,0.18)');
+    }, (g) => {
+      g.fillStyle = '#b4b4b4';
+      g.fillRect(0, 0, S, S);
+      noise(g, S, S, 30000, r, 0.22, 1, 3);
+      // concave tooled joint: a wide shallow dip with a deeper center
+      joints(g, 7, 'rgba(0,0,0,0.22)');
+      joints(g, 4, 'rgba(0,0,0,0.30)');
+      joints(g, 2, 'rgba(0,0,0,0.35)');
+    }, 2.2));
   }
 
-  // --- Painted concrete block (interior walls), white so vertex colors tint it
+  // --- Painted cinder block (interior walls), 2.4 m tile: 40 x 20 cm units, white so
+  // vertex colors tint the paint. Paint fills but doesn't hide the porous face, and the
+  // joints are concave.
   {
-    const S = 512, rows = 12, cols = 6, bh = S / rows, bw = S / cols;
+    const S = 1024, rows = 12, cols = 6, bh = S / rows, bw = S / cols;
     const joints = (g, col, lw) => {
       g.strokeStyle = col;
       g.lineWidth = lw;
+      g.beginPath();
+      for (let y = 0; y <= rows; y++) { g.moveTo(0, y * bh); g.lineTo(S, y * bh); }
       for (let y = 0; y < rows; y++) {
-        g.beginPath(); g.moveTo(0, y * bh); g.lineTo(S, y * bh); g.stroke();
         const off = (y % 2) * bw * 0.5;
-        for (let x = 0; x <= cols; x++) {
-          g.beginPath(); g.moveTo(x * bw + off, y * bh); g.lineTo(x * bw + off, (y + 1) * bh); g.stroke();
-        }
+        for (let x = 0; x <= cols; x++) { g.moveTo(x * bw + off, y * bh); g.lineTo(x * bw + off, (y + 1) * bh); }
+      }
+      g.stroke();
+    };
+    // pores: many small pits, a few larger voids
+    const pits = (g, n, sMin, sMax, style) => {
+      g.fillStyle = style;
+      for (let i = 0; i < n; i++) {
+        const s = sMin + r() * (sMax - sMin);
+        g.beginPath();
+        g.arc(r() * S, r() * S, s, 0, Math.PI * 2);
+        g.fill();
       }
     };
     put('block', surface(S, 2.4, (g) => {
-      g.fillStyle = '#f4f1ea';
+      g.fillStyle = '#f3f0e8';
       g.fillRect(0, 0, S, S);
-      speckle(g, S, S, 7000, ['rgba(0,0,0,0.03)', 'rgba(255,255,255,0.5)'], r);
-      joints(g, 'rgba(0,0,0,0.08)', 2);
+      // slight unit-to-unit variation under the paint
+      for (let y = 0; y < rows; y++) {
+        const off = (y % 2) * bw * 0.5;
+        for (let x = -1; x <= cols; x++) {
+          g.fillStyle = `rgba(${r() < 0.5 ? '0,0,0' : '255,255,255'},${0.015 + r() * 0.02})`;
+          g.fillRect(x * bw + off, y * bh, bw, bh);
+        }
+      }
+      pits(g, 9000, 0.6, 1.6, 'rgba(0,0,0,0.07)');
+      pits(g, 500, 1.6, 3.2, 'rgba(0,0,0,0.06)');
+      joints(g, 'rgba(0,0,0,0.05)', 7);
+      joints(g, 'rgba(0,0,0,0.07)', 3);
     }, (g) => {
-      noise(g, S, S, 12000, r, 0.35, 1, 3);
-      joints(g, '#2a2a2a', 3);
-    }, 2.2));
+      g.fillStyle = '#b0b0b0';
+      g.fillRect(0, 0, S, S);
+      noise(g, S, S, 30000, r, 0.25, 1, 3);
+      pits(g, 9000, 0.6, 1.6, 'rgba(0,0,0,0.35)');
+      pits(g, 500, 1.6, 3.2, 'rgba(0,0,0,0.3)');
+      joints(g, 'rgba(0,0,0,0.25)', 9);
+      joints(g, 'rgba(0,0,0,0.35)', 5);
+      joints(g, 'rgba(0,0,0,0.4)', 2);
+    }, 2.4));
   }
 
   // --- Vinyl composition tile hallway floor, 2.4m tile (8x8 tiles of 30cm)
