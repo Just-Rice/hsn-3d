@@ -44,149 +44,238 @@ function shade(hex, amt) {
   return '#' + c.getHexString();
 }
 
+// Tangent-space normal map from a grayscale height canvas (tiles seamlessly).
+function normalFromHeight(hc, strength = 2) {
+  const w = hc.width, h = hc.height;
+  const src = hc.getContext('2d').getImageData(0, 0, w, h).data;
+  const out = makeCanvas(w, h);
+  const g = out.getContext('2d');
+  const img = g.createImageData(w, h);
+  const d = img.data;
+  const H = (x, y) => src[((((y + h) % h) * w + ((x + w) % w)) << 2)] / 255;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const dx = (H(x + 1, y) - H(x - 1, y)) * strength;
+      const dy = (H(x, y + 1) - H(x, y - 1)) * strength;
+      let nx = -dx, ny = dy, nz = 1;
+      const l = Math.hypot(nx, ny, nz);
+      nx /= l; ny /= l; nz /= l;
+      const i = (y * w + x) << 2;
+      d[i] = (nx * 0.5 + 0.5) * 255;
+      d[i + 1] = (ny * 0.5 + 0.5) * 255;
+      d[i + 2] = (nz * 0.5 + 0.5) * 255;
+      d[i + 3] = 255;
+    }
+  g.putImageData(img, 0, 0);
+  return out;
+}
+
+// Draw a color canvas and a matching height canvas, return { map, normal }
+function surface(size, meters, drawColor, drawHeight, strength = 2) {
+  const [w, h] = Array.isArray(size) ? size : [size, size];
+  const c = makeCanvas(w, h), g = c.getContext('2d');
+  drawColor(g, w, h);
+  const out = { map: toTexture(c, meters) };
+  if (drawHeight) {
+    const hc = makeCanvas(w, h), hg = hc.getContext('2d');
+    hg.fillStyle = '#808080';
+    hg.fillRect(0, 0, w, h);
+    drawHeight(hg, w, h);
+    out.normal = toTexture(normalFromHeight(hc, strength), meters, { srgb: false });
+  }
+  return out;
+}
+
+function noise(g, w, h, n, r, a = 0.25, sMin = 1, sMax = 3) {
+  for (let i = 0; i < n; i++) {
+    const v = r() < 0.5 ? 0 : 255;
+    g.fillStyle = `rgba(${v},${v},${v},${a * r()})`;
+    const s = sMin + r() * (sMax - sMin);
+    g.fillRect(r() * w, r() * h, s, s);
+  }
+}
+
 export function makeTextures() {
   const r = rng(1997);
   const T = {};
+  const put = (name, sf) => {
+    T[name] = sf.map;
+    if (sf.normal) T[name + 'N'] = sf.normal;
+  };
 
   // --- Brick (running bond), 2.4m tile
   {
-    const c = makeCanvas(512, 512), g = c.getContext('2d');
-    g.fillStyle = '#b9ab98';
-    g.fillRect(0, 0, 512, 512);
-    const rows = 36, cols = 12, bh = 512 / rows, bw = 512 / cols;
+    const rows = 36, cols = 12, S = 512, bh = S / rows, bw = S / cols;
     const base = ['#8a3f2e', '#94472f', '#7e392a', '#9a4f36', '#733325', '#a0553a', '#86412f'];
-    for (let y = 0; y < rows; y++) {
-      const off = (y % 2) * bw * 0.5;
-      for (let x = -1; x <= cols; x++) {
-        g.fillStyle = shade(base[Math.floor(r() * base.length)], (r() - 0.5) * 0.06);
-        g.fillRect(x * bw + off + 1.2, y * bh + 1.2, bw - 2.4, bh - 2.4);
+    const tones = [];
+    for (let y = 0; y < rows; y++) for (let x = -1; x <= cols; x++) tones.push(shade(base[Math.floor(r() * base.length)], (r() - 0.5) * 0.07));
+    put('brick', surface(S, 2.4, (g) => {
+      g.fillStyle = '#b3a592';
+      g.fillRect(0, 0, S, S);
+      let k = 0;
+      for (let y = 0; y < rows; y++) {
+        const off = (y % 2) * bw * 0.5;
+        for (let x = -1; x <= cols; x++) {
+          g.fillStyle = tones[k++];
+          g.fillRect(x * bw + off + 1.4, y * bh + 1.4, bw - 2.8, bh - 2.8);
+        }
       }
-    }
-    speckle(g, 512, 512, 5000, ['rgba(0,0,0,0.12)', 'rgba(255,230,200,0.08)'], r);
-    T.brick = toTexture(c, 2.4);
+      speckle(g, S, S, 6000, ['rgba(0,0,0,0.14)', 'rgba(255,230,200,0.08)'], r);
+    }, (g) => {
+      g.fillStyle = '#303030';
+      g.fillRect(0, 0, S, S);
+      for (let y = 0; y < rows; y++) {
+        const off = (y % 2) * bw * 0.5;
+        for (let x = -1; x <= cols; x++) {
+          g.fillStyle = '#c8c8c8';
+          g.fillRect(x * bw + off + 1.6, y * bh + 1.6, bw - 3.2, bh - 3.2);
+        }
+      }
+      noise(g, S, S, 9000, r, 0.2);
+    }, 3));
   }
 
-  // --- Painted concrete block (interior walls), 2.4m tile, white so vertex colors tint it
+  // --- Painted concrete block (interior walls), white so vertex colors tint it
   {
-    const c = makeCanvas(512, 512), g = c.getContext('2d');
-    g.fillStyle = '#f4f1ea';
-    g.fillRect(0, 0, 512, 512);
-    speckle(g, 512, 512, 7000, ['rgba(0,0,0,0.035)', 'rgba(255,255,255,0.5)'], r);
-    g.strokeStyle = 'rgba(0,0,0,0.10)';
-    g.lineWidth = 2;
-    const rows = 12, cols = 6, bh = 512 / rows, bw = 512 / cols;
-    for (let y = 0; y < rows; y++) {
-      g.beginPath();
-      g.moveTo(0, y * bh);
-      g.lineTo(512, y * bh);
-      g.stroke();
-      const off = (y % 2) * bw * 0.5;
-      for (let x = 0; x <= cols; x++) {
-        g.beginPath();
-        g.moveTo(x * bw + off, y * bh);
-        g.lineTo(x * bw + off, (y + 1) * bh);
-        g.stroke();
+    const S = 512, rows = 12, cols = 6, bh = S / rows, bw = S / cols;
+    const joints = (g, col, lw) => {
+      g.strokeStyle = col;
+      g.lineWidth = lw;
+      for (let y = 0; y < rows; y++) {
+        g.beginPath(); g.moveTo(0, y * bh); g.lineTo(S, y * bh); g.stroke();
+        const off = (y % 2) * bw * 0.5;
+        for (let x = 0; x <= cols; x++) {
+          g.beginPath(); g.moveTo(x * bw + off, y * bh); g.lineTo(x * bw + off, (y + 1) * bh); g.stroke();
+        }
       }
-    }
-    T.block = toTexture(c, 2.4);
+    };
+    put('block', surface(S, 2.4, (g) => {
+      g.fillStyle = '#f4f1ea';
+      g.fillRect(0, 0, S, S);
+      speckle(g, S, S, 7000, ['rgba(0,0,0,0.03)', 'rgba(255,255,255,0.5)'], r);
+      joints(g, 'rgba(0,0,0,0.08)', 2);
+    }, (g) => {
+      noise(g, S, S, 12000, r, 0.35, 1, 3);
+      joints(g, '#2a2a2a', 3);
+    }, 2.2));
   }
 
   // --- Vinyl composition tile hallway floor, 2.4m tile (8x8 tiles of 30cm)
   {
-    const c = makeCanvas(512, 512), g = c.getContext('2d');
-    const n = 8, s = 512 / n;
-    for (let y = 0; y < n; y++) {
-      for (let x = 0; x < n; x++) {
-        const alt = (x + y) % 2 === 0;
-        g.fillStyle = alt ? '#e4dccb' : '#d8ceb9';
-        if ((x * 7 + y * 3) % 23 === 0) g.fillStyle = '#9fae8f';
-        g.fillRect(x * s, y * s, s, s);
+    const S = 512, n = 8, s = S / n;
+    put('tile', surface(S, 2.4, (g) => {
+      for (let y = 0; y < n; y++)
+        for (let x = 0; x < n; x++) {
+          g.fillStyle = (x + y) % 2 === 0 ? '#e6dfcf' : '#d9d0bc';
+          if ((x * 7 + y * 3) % 23 === 0) g.fillStyle = '#8fa4c2';
+          g.fillRect(x * s, y * s, s, s);
+        }
+      speckle(g, S, S, 9000, ['rgba(90,80,60,0.22)', 'rgba(255,255,255,0.35)', 'rgba(60,70,110,0.15)'], r, 1, 3);
+      g.strokeStyle = 'rgba(0,0,0,0.10)';
+      g.lineWidth = 1;
+      for (let i = 0; i <= n; i++) {
+        g.beginPath(); g.moveTo(i * s, 0); g.lineTo(i * s, S); g.stroke();
+        g.beginPath(); g.moveTo(0, i * s); g.lineTo(S, i * s); g.stroke();
       }
-    }
-    speckle(g, 512, 512, 9000, ['rgba(90,80,60,0.25)', 'rgba(255,255,255,0.35)', 'rgba(60,90,60,0.18)'], r, 1, 3);
-    g.strokeStyle = 'rgba(0,0,0,0.12)';
-    g.lineWidth = 1;
-    for (let i = 0; i <= n; i++) {
-      g.beginPath(); g.moveTo(i * s, 0); g.lineTo(i * s, 512); g.stroke();
-      g.beginPath(); g.moveTo(0, i * s); g.lineTo(512, i * s); g.stroke();
-    }
-    T.tile = toTexture(c, 2.4);
+    }, (g) => {
+      g.strokeStyle = '#404040';
+      g.lineWidth = 2;
+      for (let i = 0; i <= n; i++) {
+        g.beginPath(); g.moveTo(i * s, 0); g.lineTo(i * s, S); g.stroke();
+        g.beginPath(); g.moveTo(0, i * s); g.lineTo(S, i * s); g.stroke();
+      }
+    }, 1.5));
   }
 
-  // --- Carpet (white base, tinted per room with vertex colors), 1m
-  {
-    const c = makeCanvas(256, 256), g = c.getContext('2d');
+  // --- Carpet (white base, tinted per room), 1m
+  put('carpet', surface(256, 1.0, (g) => {
     g.fillStyle = '#d9d9d9';
     g.fillRect(0, 0, 256, 256);
     speckle(g, 256, 256, 14000, ['rgba(0,0,0,0.13)', 'rgba(255,255,255,0.35)', 'rgba(0,0,0,0.06)'], r, 1, 2);
-    T.carpet = toTexture(c, 1.0);
-  }
+  }, (g) => noise(g, 256, 256, 20000, r, 0.6, 1, 2), 2.5));
 
   // --- Hardwood gym floor, 4m tile
   {
-    const c = makeCanvas(512, 512), g = c.getContext('2d');
-    const strips = 40, sh = 512 / strips;
+    const S = 512, strips = 40, sh = S / strips;
+    const planks = [];
     for (let y = 0; y < strips; y++) {
       let x = -r() * 200;
-      while (x < 512) {
+      while (x < S) {
         const len = 90 + r() * 180;
-        g.fillStyle = shade('#c8955b', (r() - 0.5) * 0.08);
-        g.fillRect(x, y * sh, len - 1, sh - 0.6);
+        planks.push([x, y * sh, len, shade('#c8955b', (r() - 0.5) * 0.09)]);
         x += len;
       }
     }
-    speckle(g, 512, 512, 3000, ['rgba(90,50,20,0.10)'], r, 1, 4);
-    T.wood = toTexture(c, 4.0);
+    put('wood', surface(S, 4.0, (g) => {
+      for (const [x, y, len, col] of planks) {
+        g.fillStyle = col;
+        g.fillRect(x, y, len - 1, sh - 0.6);
+      }
+      speckle(g, S, S, 3000, ['rgba(90,50,20,0.10)'], r, 1, 4);
+    }, (g) => {
+      g.fillStyle = '#c0c0c0';
+      g.fillRect(0, 0, S, S);
+      g.fillStyle = '#505050';
+      for (const [x, y, len] of planks) {
+        g.fillRect(x + len - 1.5, y, 1.5, sh);
+        g.fillRect(x, y + sh - 0.8, len, 0.8);
+      }
+    }, 1.2));
   }
 
   // --- Ceramic tile (restrooms, pool deck, kitchen), 1.2m
   {
-    const c = makeCanvas(256, 256), g = c.getContext('2d');
-    g.fillStyle = '#bdbdb8';
-    g.fillRect(0, 0, 256, 256);
     const n = 8, s = 256 / n;
-    for (let y = 0; y < n; y++)
-      for (let x = 0; x < n; x++) {
-        g.fillStyle = shade('#f1efe8', (r() - 0.5) * 0.04);
-        g.fillRect(x * s + 1.5, y * s + 1.5, s - 3, s - 3);
-      }
-    T.ceramic = toTexture(c, 1.2);
+    put('ceramic', surface(256, 1.2, (g) => {
+      g.fillStyle = '#bdbdb8';
+      g.fillRect(0, 0, 256, 256);
+      for (let y = 0; y < n; y++)
+        for (let x = 0; x < n; x++) {
+          g.fillStyle = shade('#f1efe8', (r() - 0.5) * 0.04);
+          g.fillRect(x * s + 1.5, y * s + 1.5, s - 3, s - 3);
+        }
+    }, (g) => {
+      g.fillStyle = '#383838';
+      g.fillRect(0, 0, 256, 256);
+      g.fillStyle = '#c8c8c8';
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) g.fillRect(x * s + 1.8, y * s + 1.8, s - 3.6, s - 3.6);
+    }, 2.5));
   }
 
   // --- Acoustic ceiling tile (2'x4'), 2.4m
   {
-    const c = makeCanvas(512, 512), g = c.getContext('2d');
-    g.fillStyle = '#f2f0ea';
-    g.fillRect(0, 0, 512, 512);
-    speckle(g, 512, 512, 12000, ['rgba(0,0,0,0.10)', 'rgba(0,0,0,0.05)'], r, 1, 2);
-    g.fillStyle = '#c9c6bd';
-    const cw = 512 / 4, ch = 512 / 2;
-    for (let i = 0; i <= 4; i++) g.fillRect(i * cw - 2, 0, 4, 512);
-    for (let i = 0; i <= 2; i++) g.fillRect(0, i * ch - 2, 512, 4);
-    T.ceiling = toTexture(c, 2.4);
+    const S = 512, cw = S / 4, ch = S / 2;
+    put('ceiling', surface(S, 2.4, (g) => {
+      g.fillStyle = '#f2f0ea';
+      g.fillRect(0, 0, S, S);
+      speckle(g, S, S, 12000, ['rgba(0,0,0,0.10)', 'rgba(0,0,0,0.05)'], r, 1, 2);
+      g.fillStyle = '#d4d1c8';
+      for (let i = 0; i <= 4; i++) g.fillRect(i * cw - 3, 0, 6, S);
+      for (let i = 0; i <= 2; i++) g.fillRect(0, i * ch - 3, S, 6);
+    }, (g) => {
+      noise(g, S, S, 16000, r, 0.5, 1, 2);
+      g.fillStyle = '#202020';
+      for (let i = 0; i <= 4; i++) g.fillRect(i * cw - 3, 0, 6, S);
+      for (let i = 0; i <= 2; i++) g.fillRect(0, i * ch - 3, S, 6);
+    }, 2));
   }
 
   // --- Concrete, 3m
-  {
-    const c = makeCanvas(256, 256), g = c.getContext('2d');
+  put('concrete', surface(256, 3.0, (g) => {
     g.fillStyle = '#a9a7a1';
     g.fillRect(0, 0, 256, 256);
     speckle(g, 256, 256, 9000, ['rgba(0,0,0,0.08)', 'rgba(255,255,255,0.12)'], r, 1, 3);
-    T.concrete = toTexture(c, 3.0);
-  }
+  }, (g) => noise(g, 256, 256, 9000, r, 0.35, 1, 4), 1.5));
 
   // --- Asphalt, 4m
-  {
-    const c = makeCanvas(256, 256), g = c.getContext('2d');
+  put('asphalt', surface(256, 4.0, (g) => {
     g.fillStyle = '#3c3e41';
     g.fillRect(0, 0, 256, 256);
     speckle(g, 256, 256, 12000, ['rgba(0,0,0,0.25)', 'rgba(255,255,255,0.08)', 'rgba(120,120,120,0.2)'], r, 1, 2);
-    T.asphalt = toTexture(c, 4.0);
-  }
+  }, (g) => noise(g, 256, 256, 20000, r, 0.7, 1, 2), 2));
 
   // --- Grass, 6m
-  {
-    const c = makeCanvas(512, 512), g = c.getContext('2d');
+  put('grass', surface(512, 6.0, (g) => {
     g.fillStyle = '#5b8a3a';
     g.fillRect(0, 0, 512, 512);
     for (let i = 0; i < 60; i++) {
@@ -203,17 +292,14 @@ export function makeTextures() {
       g.lineTo(x + (r() - 0.5) * 3, y - 2 - r() * 4);
       g.stroke();
     }
-    T.grass = toTexture(c, 6.0);
-  }
+  }, (g) => noise(g, 512, 512, 30000, r, 0.6, 1, 3), 1.5));
 
   // --- Roof membrane / gravel, 4m
-  {
-    const c = makeCanvas(256, 256), g = c.getContext('2d');
-    g.fillStyle = '#8f8d88';
+  put('roof', surface(256, 4.0, (g) => {
+    g.fillStyle = '#9b9994';
     g.fillRect(0, 0, 256, 256);
-    speckle(g, 256, 256, 14000, ['rgba(0,0,0,0.18)', 'rgba(255,255,255,0.15)', 'rgba(120,100,80,0.2)'], r, 1, 3);
-    T.roof = toTexture(c, 4.0);
-  }
+    speckle(g, 256, 256, 14000, ['rgba(0,0,0,0.16)', 'rgba(255,255,255,0.15)', 'rgba(120,100,80,0.18)'], r, 1, 3);
+  }, (g) => noise(g, 256, 256, 14000, r, 0.6, 1, 3), 2));
 
   // --- Pool water, 4m (animated offset)
   {
@@ -230,6 +316,21 @@ export function makeTextures() {
       g.stroke();
     }
     T.water = toTexture(c, 4.0);
+    // gentle ripples as a normal map
+    const hc = makeCanvas(256, 256), hg = hc.getContext('2d');
+    hg.fillStyle = '#808080';
+    hg.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 90; i++) {
+      const gr = hg.createRadialGradient(0, 0, 0, 0, 0, 20 + r() * 30);
+      gr.addColorStop(0, 'rgba(255,255,255,0.25)');
+      gr.addColorStop(1, 'rgba(255,255,255,0)');
+      hg.save();
+      hg.translate(r() * 256, r() * 256);
+      hg.fillStyle = gr;
+      hg.fillRect(-60, -60, 120, 120);
+      hg.restore();
+    }
+    T.waterN = toTexture(normalFromHeight(hc, 3), 4.0, { srgb: false });
   }
 
   return T;

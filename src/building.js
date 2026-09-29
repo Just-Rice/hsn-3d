@@ -1,8 +1,9 @@
-// Builds the school: walls with door openings, floors, ceilings, switchback stairs, the brick
-// exterior skin with windows and parapets, roofs, the natatorium, entrances and room signs.
+// Builds the school: walls with door and window openings, floors, ceilings, switchback stairs,
+// the brick exterior skin with real window openings and parapets, roofs, the natatorium,
+// entrances and room signs.
 import * as THREE from 'three';
 import {
-  BLOCKS, ROOMS, ENTRANCES, COURTYARD, PORCH, POOL_PIT, STAGE, LEVEL_H, SLAB, CEIL2, DOOR_H,
+  BLOCKS, ROOMS, ENTRANCES, COURTYARD, PORCH, POOL, STAGE, LEVEL_H, SLAB, CEIL2, DOOR_H, hy,
   rectW, wx, wz, ZONES,
 } from './layout.js';
 import { Batches, subtractRects, hexToRGB, inRect, WHITE } from './geo.js';
@@ -13,8 +14,10 @@ const SK = 0.32; // exterior brick skin thickness
 const PARAPET = 0.6;
 const L1_TOP = CEIL2[1] + 0.05;
 const EPS = 0.06;
+const WIN = [[0.9, 2.5], [LEVEL_H + 0.9, LEVEL_H + 2.5]]; // window sill/head per level
+const ENTRY_H = 2.7;
 
-const CARPETS = ['#7086b0', '#9a6b4a', '#5d8f7c', '#8b6aa0', '#8f8a4a', '#a85f55', '#4f7d99', '#b08a3e'];
+const CARPETS = ['#6f84ad', '#9a6b4a', '#5d8f7c', '#8b6aa0', '#8f8a4a', '#a85f55', '#4f7d99', '#b08a3e'];
 
 export function floorStyle(room, idx) {
   switch (room.type) {
@@ -38,7 +41,7 @@ export function floorStyle(room, idx) {
   }
 }
 
-export function buildBuilding(scene, world, T) {
+export function buildBuilding(scene, world, T, M) {
   const B = new Batches();
   const atlas = new LabelAtlas();
   const R = rng(99);
@@ -55,13 +58,13 @@ export function buildBuilding(scene, world, T) {
     const b = blockAt(x, z);
     if (!b) return 0;
     if (b.levels === 2) return LEVEL_H;
-    return b.ceil + 0.03;
+    return b.roof - 0.3; // interior walls run up to the underside of the roof deck
   };
   const ceil0 = (b) => (b.levels === 2 ? CEIL2[0] : b.ceil);
 
   const rooms = [];
   ROOMS.forEach((list, level) =>
-    list.forEach((rm, i) => {
+    list.forEach((rm) => {
       const Rw = rectW(rm.r);
       const room = {
         ...rm, level, R: Rw, idx: rooms.length,
@@ -72,7 +75,7 @@ export function buildBuilding(scene, world, T) {
       for (const spec of rm.doors) {
         const [side, f, w] = spec.split(':');
         const frac = f !== undefined ? parseFloat(f) : 0.5;
-        const width = w !== undefined ? parseFloat(w) : rm.big ? 2.0 : 1.1;
+        const width = w !== undefined ? parseFloat(w) : rm.big ? 2.0 : 1.2;
         const horiz = side === 'N' || side === 'S';
         const a = horiz ? Rw[0] : Rw[1], b = horiz ? Rw[2] : Rw[3];
         const c = side === 'N' ? Rw[1] : side === 'S' ? Rw[3] : side === 'W' ? Rw[0] : Rw[2];
@@ -96,7 +99,6 @@ export function buildBuilding(scene, world, T) {
 
   // ------------------------------------------------------------------ helpers
   const lineKey = (axis, c) => axis + '|' + Math.round(c * 1000);
-  // point helper: along-line coordinate m on line (axis,c) -> [x,z]
   const P = (axis, c, m) => (axis === 'z' ? [m, c] : [c, m]);
   // box spanning a line segment: axis 'z' => x in [p,q], z in [c+o0,c+o1]
   const segBox = (bb, axis, c, p, q, o0, o1, y0, y1, color, faces) => {
@@ -107,8 +109,21 @@ export function buildBuilding(scene, world, T) {
     if (axis === 'z') world.add(p, y0, c + Math.min(o0, o1), q, y1, c + Math.max(o0, o1), tag);
     else world.add(c + Math.min(o0, o1), y0, p, c + Math.max(o0, o1), y1, q, tag);
   };
+  // [lo,hi] minus a list of [a,b] openings
+  const solidSpans = (lo, hi, holes) => {
+    let spans = [[lo, hi]];
+    for (const [a, b] of holes) {
+      const next = [];
+      for (const [s, e] of spans) {
+        if (b <= s || a >= e) { next.push([s, e]); continue; }
+        if (a > s) next.push([s, a]);
+        if (b < e) next.push([b, e]);
+      }
+      spans = next;
+    }
+    return spans.filter(([s, e]) => e - s > 0.01);
+  };
 
-  // Boundary pieces of a union of rects: calls cb(axis, c, p, q, out, insidePt, outsidePt, rect)
   const allXs = [...new Set(blockRects.flatMap((b) => [b.r[0], b.r[2]]))].sort((a, b) => a - b);
   const allZs = [...new Set(blockRects.flatMap((b) => [b.r[1], b.r[3]]))].sort((a, b) => a - b);
   function forEachEdgeInterval(rect, cb) {
@@ -124,64 +139,124 @@ export function buildBuilding(scene, world, T) {
         const p = bps[i], q = bps[i + 1];
         if (q - p < 1e-4) continue;
         const m = (p + q) / 2;
-        const inPt = P(axis, c - out * EPS, m), outPt = P(axis, c + out * EPS, m);
-        cb(axis, c, p, q, out, inPt, outPt);
+        cb(axis, c, p, q, out, P(axis, c - out * EPS, m), P(axis, c + out * EPS, m));
+      }
+    }
+  }
+  const level1Rects = blocks[0].R;
+  const onLevel = (lv, x, z) => (lv === 1 ? level1Rects.some((r) => inRect(r, x, z)) : !!blockAt(x, z));
+
+  // ------------------------------------------------------------------ exterior runs + windows
+  // A run is a stretch of block edge with constant heights inside/outside; skin covers hOut..hIn.
+  const topOf = (b) => b.roof;
+  const runs = [];
+  for (const { r, b } of blockRects) {
+    const local = [];
+    forEachEdgeInterval(r, (axis, c, p, q, out, inPt, outPt) => {
+      let hOut = 0;
+      for (const br of blockRects) if (br.r !== r && inRect(br.r, outPt[0], outPt[1])) hOut = Math.max(hOut, br.b === b ? topOf(b) + PARAPET : topOf(br.b));
+      const hIn = topOf(b) + PARAPET;
+      if (hIn <= hOut + 0.01) return;
+      const last = local[local.length - 1];
+      if (last && last.axis === axis && Math.abs(last.c - c) < 1e-6 && last.hOut === hOut && Math.abs(last.q - p) < 1e-4) last.q = q;
+      else local.push({ axis, c, p, q, out, hOut, hIn, b, openings: [] });
+    });
+    runs.push(...local);
+  }
+  // windows go in bays between the rooms that touch the facade, one or more per bay
+  const windowsByLine = [new Map(), new Map()];
+  const windows = [];
+  for (const run of runs) {
+    const { axis, c, p, q, out, hOut, hIn, b } = run;
+    if (hOut === 0)
+      for (const e of entrances)
+        if (e.axis === axis && Math.abs(e.c - c) < 0.05 && e.b > p && e.a < q) run.openings.push({ a: e.a, b: e.b, y0: 0, y1: ENTRY_H, entrance: true });
+    if (b.windows === false) continue;
+    for (let lv = 0; lv < (b.levels === 2 ? 2 : 1); lv++) {
+      const [y0, y1] = WIN[lv];
+      if (hOut > y0 - 0.3 || hIn < y1 + 0.6) continue;
+      const cuts = new Set([p, q]);
+      for (const rm of rooms) {
+        if (rm.level !== lv) continue;
+        const [x0, z0, x1, z1] = rm.R;
+        const onLine = axis === 'z' ? Math.abs(z0 - c) < 0.05 || Math.abs(z1 - c) < 0.05 : Math.abs(x0 - c) < 0.05 || Math.abs(x1 - c) < 0.05;
+        if (!onLine) continue;
+        const [a, bb] = axis === 'z' ? [x0, x1] : [z0, z1];
+        if (bb <= p || a >= q) continue;
+        cuts.add(Math.max(p, a));
+        cuts.add(Math.min(q, bb));
+      }
+      const pts = [...cuts].sort((m, n) => m - n);
+      for (let i = 0; i < pts.length - 1; i++) {
+        const u0 = pts[i], u1 = pts[i + 1], len = u1 - u0;
+        if (len < 2.8) continue;
+        const inPt = P(axis, c - out * 0.6, (u0 + u1) / 2);
+        if (!onLevel(lv, inPt[0], inPt[1])) continue;
+        if (stairRects.some((sr) => inRect(sr, inPt[0], inPt[1]))) continue;
+        const n = Math.max(1, Math.floor((len - 0.6) / 3.1));
+        const pitch = (len - 0.4) / n;
+        const ww = Math.min(2.2, pitch - 0.9);
+        if (ww < 1.0) continue;
+        for (let k = 0; k < n; k++) {
+          const m = u0 + 0.2 + pitch * (k + 0.5);
+          const a = m - ww / 2, bw = m + ww / 2;
+          if (run.openings.some((o) => o.entrance && bw > o.a - 0.6 && a < o.b + 0.6)) continue;
+          const w = { axis, c, out, a, b: bw, y0, y1, lv };
+          run.openings.push(w);
+          windows.push(w);
+          const key = lineKey(axis, c);
+          if (!windowsByLine[lv].has(key)) windowsByLine[lv].set(key, []);
+          windowsByLine[lv].get(key).push(w);
+        }
       }
     }
   }
 
-  // ------------------------------------------------------------------ walls
+  // ------------------------------------------------------------------ interior walls
   const segs = [new Map(), new Map()];
-  const addWallItem = (level, axis, c, a, b, h) => {
+  const group = (level, axis, c) => {
     const k = lineKey(axis, c);
     let g = segs[level].get(k);
-    if (!g) segs[level].set(k, (g = { axis, c, items: [], doors: [] }));
-    g.items.push({ a, b, h });
+    if (!g) segs[level].set(k, (g = { axis, c, items: [], doors: [], wins: windowsByLine[level].get(k) || [] }));
+    return g;
   };
-  const addDoorItem = (level, axis, c, a, b) => {
-    const k = lineKey(axis, c);
-    let g = segs[level].get(k);
-    if (!g) segs[level].set(k, (g = { axis, c, items: [], doors: [] }));
-    g.doors.push({ a, b });
-  };
-  const levelWallH = (level, axis, c, m) => {
-    if (level === 1) return L1_TOP - LEVEL_H;
-    const [x1, z1] = P(axis, c - 0.3, m);
-    const [x2, z2] = P(axis, c + 0.3, m);
-    return Math.max(wallTop0(x1, z1), wallTop0(x2, z2));
-  };
-
   for (const rm of rooms) {
     const [x0, z0, x1, z1] = rm.R;
     const sides = { N: ['z', z0, x0, x1], S: ['z', z1, x0, x1], W: ['x', x0, z0, z1], E: ['x', x1, z0, z1] };
     for (const s of 'NSWE') {
       if (rm.type === 'stair' && rm.open === s) continue;
       const [axis, c, a, b] = sides[s];
-      addWallItem(rm.level, axis, c, a, b, -1); // height resolved per piece
+      group(rm.level, axis, c).items.push({ a, b });
     }
-    for (const d of rm.doorList) addDoorItem(rm.level, d.axis, d.c, d.a, d.b);
+    for (const d of rm.doorList) group(rm.level, d.axis, d.c).doors.push({ a: d.a, b: d.b });
   }
-  // level perimeters
-  const level1Rects = blocks[0].R;
   for (const { r } of blockRects)
     forEachEdgeInterval(r, (axis, c, p, q, out, inPt, outPt) => {
-      if (!blockAt(...outPt)) addWallItem(0, axis, c, p, q, -1);
+      if (!blockAt(...outPt)) group(0, axis, c).items.push({ a: p, b: q });
     });
   for (const r of level1Rects)
     forEachEdgeInterval(r, (axis, c, p, q, out, inPt, outPt) => {
-      if (!level1Rects.some((rr) => inRect(rr, outPt[0], outPt[1]))) addWallItem(1, axis, c, p, q, -1);
+      if (!level1Rects.some((rr) => inRect(rr, outPt[0], outPt[1]))) group(1, axis, c).items.push({ a: p, b: q });
     });
-  for (const e of entrances) addDoorItem(0, e.axis, e.c, e.a, e.b);
+  for (const e of entrances) group(0, e.axis, e.c).doors.push({ a: e.a, b: e.b, entrance: true });
 
-  const wallColor = [hexToRGB('#efe6d2'), hexToRGB('#e2ebe3')];
+  const levelWallH = (level, axis, c, m) => {
+    if (level === 1) return L1_TOP - LEVEL_H;
+    const [x1, z1] = P(axis, c - 0.3, m);
+    const [x2, z2] = P(axis, c + 0.3, m);
+    return Math.max(wallTop0(x1, z1), wallTop0(x2, z2));
+  };
+  const wallColor = [hexToRGB('#ece4d3'), hexToRGB('#e2e9e6')];
+  const baseCol = hexToRGB('#3b3733');
   const mapWalls = [[], []];
-  const doorways = []; // for door frames: {level, axis, c, p, q}
+  const doorways = [];
   for (let level = 0; level < 2; level++) {
     const base = level === 0 ? 0 : LEVEL_H;
     for (const g of segs[level].values()) {
       const bps = new Set();
       g.items.forEach((it) => { bps.add(it.a); bps.add(it.b); });
       g.doors.forEach((d) => { bps.add(d.a); bps.add(d.b); });
+      g.wins.forEach((w) => { bps.add(w.a); bps.add(w.b); });
       if (level === 0) {
         const lo = Math.min(...g.items.map((it) => it.a)), hi = Math.max(...g.items.map((it) => it.b));
         for (const v of g.axis === 'z' ? allXs : allZs) if (v > lo && v < hi) bps.add(v);
@@ -195,28 +270,34 @@ export function buildBuilding(scene, world, T) {
         if (!g.items.some((it) => it.a <= m && it.b >= m)) continue;
         const h = levelWallH(level, g.axis, g.c, m);
         if (h <= 0.01) continue;
-        const door = g.doors.some((d) => d.a <= m && d.b >= m);
+        const holes = [];
+        let door = false;
+        for (const d of g.doors) if (d.a <= m && d.b >= m) { holes.push([base, base + (d.entrance ? ENTRY_H : DOOR_H)]); door = true; }
+        for (const w of g.wins) if (w.a <= m && w.b >= m) holes.push([w.y0, w.y1]);
+        const sig = holes.map((hh) => hh.join(',')).join(';');
         const last = pieces[pieces.length - 1];
-        if (last && last.door === door && Math.abs(last.h - h) < 1e-3 && Math.abs(last.q - p) < 1e-4) last.q = q;
-        else pieces.push({ p, q, h, door });
+        if (last && last.sig === sig && Math.abs(last.h - h) < 1e-3 && Math.abs(last.q - p) < 1e-4) last.q = q;
+        else pieces.push({ p, q, h, holes, sig, door });
       }
       for (let i = 0; i < pieces.length; i++) {
         const pc = pieces[i];
-        const prevDoor = i > 0 && pieces[i - 1].door && Math.abs(pieces[i - 1].q - pc.p) < 1e-4;
-        const nextDoor = i < pieces.length - 1 && pieces[i + 1].door && Math.abs(pieces[i + 1].p - pc.q) < 1e-4;
-        const bb = B.get('wall');
-        if (!pc.door) {
-          const p = pc.p - (prevDoor ? 0 : WT / 2), q = pc.q + (nextDoor ? 0 : WT / 2);
-          segBox(bb, g.axis, g.c, p, q, -WT / 2, WT / 2, base, base + pc.h, wallColor[level]);
-          segCollider(g.axis, g.c, p, q, -WT / 2, WT / 2, base, base + pc.h);
-          mapWalls[level].push([g.axis, g.c, pc.p, pc.q]);
-        } else {
-          if (pc.h > DOOR_H + 0.01) {
-            segBox(bb, g.axis, g.c, pc.p, pc.q, -WT / 2, WT / 2, base + DOOR_H, base + pc.h, wallColor[level]);
-            segCollider(g.axis, g.c, pc.p, pc.q, -WT / 2, WT / 2, base + DOOR_H, base + pc.h);
+        const prev = i > 0 && Math.abs(pieces[i - 1].q - pc.p) < 1e-4 ? pieces[i - 1] : null;
+        const next = i < pieces.length - 1 && Math.abs(pieces[i + 1].p - pc.q) < 1e-4 ? pieces[i + 1] : null;
+        const solidFull = pc.holes.length === 0;
+        // extend full walls half a thickness into corners, never into an opening
+        const p = pc.p - (solidFull && (!prev || prev.holes.length === 0) ? WT / 2 : 0);
+        const q = pc.q + (solidFull && (!next || next.holes.length === 0) ? WT / 2 : 0);
+        for (const [s, e] of solidSpans(base, base + pc.h, pc.holes)) {
+          segBox(B.get('wall'), g.axis, g.c, p, q, -WT / 2, WT / 2, s, e, wallColor[level]);
+          segCollider(g.axis, g.c, p, q, -WT / 2, WT / 2, s, e);
+          if (Math.abs(s - base) < 1e-3) {
+            // vinyl base on both faces
+            segBox(B.get('satin'), g.axis, g.c, pc.p, pc.q, WT / 2, WT / 2 + 0.012, s, s + 0.1, baseCol, g.axis === 'z' ? 'ZY' : 'XY');
+            segBox(B.get('satin'), g.axis, g.c, pc.p, pc.q, -WT / 2 - 0.012, -WT / 2, s, s + 0.1, baseCol, g.axis === 'z' ? 'zY' : 'xY');
           }
-          doorways.push({ level, axis: g.axis, c: g.c, p: pc.p, q: pc.q });
         }
+        if (!pc.door) mapWalls[level].push([g.axis, g.c, pc.p, pc.q]);
+        else if (!g.doors.some((d) => d.entrance && d.a <= (pc.p + pc.q) / 2 && d.b >= (pc.p + pc.q) / 2)) doorways.push({ level, axis: g.axis, c: g.c, p: pc.p, q: pc.q });
       }
     }
   }
@@ -225,7 +306,7 @@ export function buildBuilding(scene, world, T) {
   const frameCol = hexToRGB('#5b4a3a');
   for (const d of doorways) {
     const base = d.level === 0 ? 0 : LEVEL_H;
-    const bb = B.get('paint');
+    const bb = B.get('satin');
     const o = WT / 2 + 0.03;
     segBox(bb, d.axis, d.c, d.p - 0.08, d.p, -o, o, base, base + DOOR_H + 0.08, frameCol);
     segBox(bb, d.axis, d.c, d.q, d.q + 0.08, -o, o, base, base + DOOR_H + 0.08, frameCol);
@@ -245,37 +326,35 @@ export function buildBuilding(scene, world, T) {
       for (const hinge of leaves) {
         const sgn = hinge === d.a ? 1 : -1;
         const h0 = hinge + sgn * 0.02;
-        const t0 = inward * (WT / 2), t1 = inward * (WT / 2 + lw - 0.05);
-        // leaf lies perpendicular to the wall, hugging the jamb
+        const t0 = inward * (WT / 2 + 0.01), t1 = inward * (WT / 2 + lw - 0.06);
         if (d.axis === 'z') {
           const x0 = Math.min(h0, h0 + sgn * 0.05), x1 = Math.max(h0, h0 + sgn * 0.05);
-          B.get('paint').box(x0, base + 0.01, d.c + Math.min(t0, t1), x1, base + DOOR_H - 0.04, d.c + Math.max(t0, t1), col);
+          B.get('satin').box(x0, base + 0.01, d.c + Math.min(t0, t1), x1, base + DOOR_H - 0.04, d.c + Math.max(t0, t1), col);
           world.add(x0, base, d.c + Math.min(t0, t1), x1, base + DOOR_H, d.c + Math.max(t0, t1), 2);
         } else {
           const z0 = Math.min(h0, h0 + sgn * 0.05), z1 = Math.max(h0, h0 + sgn * 0.05);
-          B.get('paint').box(d.c + Math.min(t0, t1), base + 0.01, z0, d.c + Math.max(t0, t1), base + DOOR_H - 0.04, z1, col);
+          B.get('satin').box(d.c + Math.min(t0, t1), base + 0.01, z0, d.c + Math.max(t0, t1), base + DOOR_H - 0.04, z1, col);
           world.add(d.c + Math.min(t0, t1), base, z0, d.c + Math.max(t0, t1), base + DOOR_H, z1, 2);
         }
       }
-      // sign above the door on the hallway side
       const label = rm.big ? rm.name.toUpperCase() : rm.label || rm.name;
       if (!label) continue;
-      const style = rm.big ? 'big' : 'room';
-      const uv = atlas.get(label, style);
+      const uv = atlas.get(label, rm.big ? 'big' : 'room');
       const sw = rm.big ? 2.4 : 1.0, sh = sw / 4;
-      const y0 = base + DOOR_H + 0.14;
+      const y0 = base + DOOR_H + 0.16;
       const off = d.c + d.out * (WT / 2 + 0.035);
-      B.get('sign').vquad(d.axis === 'z' ? 'z' : 'x', off, d.mid - sw / 2, d.mid + sw / 2, y0, y0 + sh, d.out, WHITE, uv);
+      B.get('sign').vquad(d.axis, off, d.mid - sw / 2, d.mid + sw / 2, y0, y0 + sh, d.out, WHITE, uv);
     }
   }
 
   // ------------------------------------------------------------------ stairs
   const stairInfo = [];
-  const stairCol = [hexToRGB('#9aa0a6'), hexToRGB('#8a9096')];
+  const railGeo = new THREE.CylinderGeometry(0.025, 0.025, 1, 8);
+  const stepCol = hexToRGB('#cfd2d4');
+  const treadCol = [hexToRGB('#8e9296'), hexToRGB('#858a8e')];
   const nose = hexToRGB('#e0b030');
   for (const st of stairs) {
     const [x0, z0, x1, z1] = st.R;
-    // local frame: s = distance from the open edge inward, t = lateral
     let frame;
     if (st.open === 'E') frame = { s0: x1, sd: -1, t0: z0, td: 1, D: x1 - x0, W: z1 - z0, sAxis: 'x' };
     else if (st.open === 'W') frame = { s0: x0, sd: 1, t0: z0, td: 1, D: x1 - x0, W: z1 - z0, sAxis: 'x' };
@@ -292,62 +371,75 @@ export function buildBuilding(scene, world, T) {
       B.get(key).box(X0, y0, Z0, X1, y1, Z1, col);
       if (collide) world.add(X0, y0, Z0, X1, y1, Z1, 3);
     };
-    const landing = Math.min(1.8, D * 0.28);
+    const landing = Math.min(2.0, D * 0.28);
     const F = D - landing;
     const n = 12, tread = F / n, rise = LEVEL_H / (2 * n);
     const half = W / 2;
+    const step = (s0, s1, t0, t1, top, k, noseAt) => {
+      boxST(s0, s1, t0, t1, 0, top - 0.03, 'paint', stepCol);
+      boxST(s0, s1, t0, t1, top - 0.03, top, 'concrete', treadCol[k % 2], false);
+      boxST(noseAt, noseAt + 0.05, t0, t1, top, top + 0.006, 'satin', nose, false);
+    };
     for (let k = 1; k <= n; k++) {
-      // lane A: up from the open edge (level 0) toward the landing
-      boxST((k - 1) * tread, k * tread, 0.02, half - 0.1, 0, k * rise, 'stair', stairCol[k % 2]);
-      boxST((k - 1) * tread, (k - 1) * tread + 0.05, 0.02, half - 0.1, k * rise, k * rise + 0.012, 'paint', nose, false);
-      // lane B: from the landing back up to level 1 at the open edge
-      boxST(F - k * tread, F - (k - 1) * tread, half + 0.1, W - 0.02, 0, LEVEL_H / 2 + k * rise, 'stair', stairCol[k % 2]);
-      boxST(F - k * tread, F - k * tread + 0.05, half + 0.1, W - 0.02, LEVEL_H / 2 + k * rise, LEVEL_H / 2 + k * rise + 0.012, 'paint', nose, false);
+      step((k - 1) * tread, k * tread, 0.02, half - 0.1, k * rise, k, (k - 1) * tread);
+      step(F - k * tread, F - (k - 1) * tread, half + 0.1, W - 0.02, LEVEL_H / 2 + k * rise, k, F - k * tread);
     }
-    boxST(F, D, 0.02, W - 0.02, 0, LEVEL_H / 2, 'stair', stairCol[0]);
-    // center wall between flights
+    boxST(F, D, 0.02, W - 0.02, 0, LEVEL_H / 2 - 0.03, 'paint', stepCol);
+    boxST(F, D, 0.02, W - 0.02, LEVEL_H / 2 - 0.03, LEVEL_H / 2, 'concrete', treadCol[0], false);
     boxST(0, F, half - 0.1, half + 0.1, 0, L1_TOP, 'wall', wallColor[0]);
+    // sloped handrails on both faces of the center wall
+    const rail = (sA, sB, yA, yB, t) => {
+      const [ax, az] = toXZ(sA, t), [bx, bz] = toXZ(sB, t);
+      const va = new THREE.Vector3(ax, yA, az), vb = new THREE.Vector3(bx, yB, bz);
+      const m = new THREE.Mesh(railGeo, M.metal);
+      m.scale.set(1, va.distanceTo(vb), 1);
+      m.position.copy(va).add(vb).multiplyScalar(0.5);
+      m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), vb.clone().sub(va).normalize());
+      m.castShadow = true;
+      scene.add(m);
+    };
+    rail(0, F, 0.9 + rise, LEVEL_H / 2 + 0.9, half - 0.14);
+    rail(F, 0, LEVEL_H / 2 + 0.9 + rise, LEVEL_H + 0.9, half + 0.14);
     // guard rail on the upper floor across the lower flight's opening
     boxST(0.02, 0.1, 0.02, half - 0.1, LEVEL_H, LEVEL_H + 1.05, 'metal', WHITE);
     for (let t = 0.1; t < half - 0.1; t += 0.5) boxST(0.03, 0.09, t, t + 0.04, LEVEL_H, LEVEL_H + 1.05, 'metal', WHITE, false);
-    // stair sign
     const uv = atlas.get('STAIRS', 'stair');
     const [sx, sz] = toXZ(-0.02, half);
-    const axisOfOpen = frame.sAxis === 'x' ? 'x' : 'z';
     const outDir = -frame.sd;
     for (const base of [0, LEVEL_H]) {
       const y0 = base + 2.45;
-      if (axisOfOpen === 'x') B.get('sign').vquad('x', sx + outDir * 0.12, sz - 0.6, sz + 0.6, y0, y0 + 0.3, outDir, WHITE, uv);
+      if (frame.sAxis === 'x') B.get('sign').vquad('x', sx + outDir * 0.12, sz - 0.6, sz + 0.6, y0, y0 + 0.3, outDir, WHITE, uv);
       else B.get('sign').vquad('z', sz + outDir * 0.12, sx - 0.6, sx + 0.6, y0, y0 + 0.3, outDir, WHITE, uv);
     }
-    const entry0 = toXZ(-0.9, half / 2);
-    const exit1 = toXZ(-0.9, half + half / 2);
-    stairInfo.push({ id: st.id, R: st.R, open: st.open, entry0, exit1, D, W });
+    // walking line up the switchback, for routes: [x, z, height]
+    const via = [
+      [...toXZ(0.25, half / 2), 0],
+      [...toXZ(F, half / 2), LEVEL_H / 2],
+      [...toXZ(F + landing / 2, half / 2), LEVEL_H / 2],
+      [...toXZ(F + landing / 2, half * 1.5), LEVEL_H / 2],
+      [...toXZ(F, half * 1.5), LEVEL_H / 2],
+      [...toXZ(F / 2, half * 1.5), LEVEL_H * 0.75],
+      [...toXZ(0.25, half * 1.5), LEVEL_H],
+    ];
+    stairInfo.push({ id: st.id, R: st.R, open: st.open, entry0: toXZ(-0.9, half / 2), exit1: toXZ(-0.9, half + half / 2), D, W, via });
   }
 
   // ------------------------------------------------------------------ floors
   const theatreRoom = rooms.find((r) => r.type === 'theatre');
-  const house = [theatreRoom.R[0], wz(830), theatreRoom.R[2], wz(990)];
-  const houseFloor = (z) => {
-    const a = wz(830), b = wz(960);
-    if (z <= a) return 0;
-    if (z >= b) return -1.4;
-    return (-1.4 * (z - a)) / (b - a);
-  };
-  const poolPit = rectW(POOL_PIT);
+  const H_BACK = wz(hy(830)), H_RAKE = wz(hy(960)), H_FRONT = wz(hy(990));
+  const house = [theatreRoom.R[0], H_BACK, theatreRoom.R[2], H_FRONT];
+  const houseFloor = (z) => (z <= H_BACK ? 0 : z >= H_RAKE ? -1.4 : (-1.4 * (z - H_BACK)) / (H_RAKE - H_BACK));
+  const poolPit = [wx(POOL.cx) - POOL.len / 2, wz(POOL.cy) - POOL.wid / 2, wx(POOL.cx) + POOL.len / 2, wz(POOL.cy) + POOL.wid / 2];
   world.addTerrain(poolPit, () => -1.7);
   world.addTerrain(house, (x, z) => houseFloor(z));
 
-  const floorHoles0 = [poolPit, house];
   for (const { r } of blockRects)
-    for (const fr of subtractRects([r], floorHoles0)) B.get('floorTile').hquad(fr[0], fr[1], fr[2], fr[3], 0.02, true, hexToRGB('#ffffff'));
-  // second floor slab
+    for (const fr of subtractRects([r], [poolPit, house])) B.get('floorTile').hquad(fr[0], fr[1], fr[2], fr[3], 0.02, true);
   const slabRects = subtractRects(level1Rects, stairRects);
   for (const r of slabRects) {
-    B.get('floorTile').box(r[0], LEVEL_H - SLAB, r[1], r[2], LEVEL_H + 0.02, r[3], hexToRGB('#f4f0e8'), 'YxXzZ');
+    B.get('floorTile').box(r[0], LEVEL_H - SLAB, r[1], r[2], LEVEL_H + 0.02, r[3], hexToRGB('#f4f0e8'), 'YyxXzZ');
     world.add(r[0], LEVEL_H - SLAB, r[1], r[2], LEVEL_H, r[3], 4);
   }
-  // room floor overlays
   rooms.forEach((rm, i) => {
     if (rm.type === 'stair' || rm.type === 'theatre') return;
     const [key, color] = floorStyle(rm, i + (rm.label ? rm.label.charCodeAt(rm.label.length - 1) : 0));
@@ -355,42 +447,36 @@ export function buildBuilding(scene, world, T) {
     const rects = rm.type === 'pool' ? subtractRects([rm.R], [poolPit]) : [rm.R];
     for (const r of rects) B.get(key).hquad(r[0], r[1], r[2], r[3], y, true, hexToRGB(color));
   });
-  // theatre: back aisle, raked house, orchestra floor, stage
   {
     const [x0, z0, x1] = theatreRoom.R;
     const carpet = hexToRGB('#6e2530');
-    B.get('carpet').hquad(x0, z0, x1, wz(830), 0.035, true, carpet);
-    B.get('carpet').slopeZ(x0, wz(830), x1, wz(960), 0.035, -1.365, carpet);
-    B.get('carpet').hquad(x0, wz(960), x1, wz(990), -1.365, true, carpet);
+    B.get('carpet').hquad(x0, z0, x1, H_BACK, 0.035, true, carpet);
+    B.get('carpet').slopeZ(x0, H_BACK, x1, H_RAKE, 0.035, -1.365, carpet);
+    B.get('carpet').hquad(x0, H_RAKE, x1, H_FRONT, -1.365, true, carpet);
     const st = rectW(STAGE);
-    B.get('wood').hquad(st[0], st[1], st[2], st[3], 0.035, true, hexToRGB('#5a3b25'));
-    // stage front + house side walls below grade
-    B.get('paint').box(x0, -1.4, wz(990) - 0.02, x1, 0.035, wz(990) + 0.02, hexToRGB('#1b1b1b'), 'z');
-    B.get('wall').box(x0 + WT / 2 - 0.02, -1.45, wz(830), x0 + WT / 2, 0.05, wz(990), wallColor[0], 'X');
-    B.get('wall').box(x1 - WT / 2, -1.45, wz(830), x1 - WT / 2 + 0.02, 0.05, wz(990), wallColor[0], 'x');
+    B.get('stage').hquad(st[0], st[1], st[2], st[3], 0.035, true, hexToRGB('#5a3b25'));
+    B.get('paint').box(x0, -1.4, H_FRONT - 0.02, x1, 0.035, H_FRONT + 0.02, hexToRGB('#1b1b1b'), 'z');
+    B.get('wall').box(x0 + WT / 2 - 0.02, -1.45, H_BACK, x0 + WT / 2, 0.05, H_FRONT, wallColor[0], 'X');
+    B.get('wall').box(x1 - WT / 2, -1.45, H_BACK, x1 - WT / 2 + 0.02, 0.05, H_FRONT, wallColor[0], 'x');
   }
-  // pool pit
   {
     const [x0, z0, x1, z1] = poolPit;
-    const tileBlue = hexToRGB('#9fd3e0');
+    const tileBlue = hexToRGB('#8fcfe0');
     B.get('ceramic').hquad(x0, z0, x1, z1, -1.7, true, tileBlue);
     B.get('ceramic').box(x0 - 0.05, -1.75, z0 - 0.05, x0, 0.04, z1 + 0.05, tileBlue, 'X');
     B.get('ceramic').box(x1, -1.75, z0 - 0.05, x1 + 0.05, 0.04, z1 + 0.05, tileBlue, 'x');
     B.get('ceramic').box(x0, -1.75, z0 - 0.05, x1, 0.04, z0, tileBlue, 'Z');
     B.get('ceramic').box(x0, -1.75, z1, x1, 0.04, z1 + 0.05, tileBlue, 'z');
-    // coping
     const cp = hexToRGB('#f4f4f0');
-    B.get('paint').box(x0 - 0.35, 0.02, z0 - 0.35, x1 + 0.35, 0.06, z0, cp, 'YzZ');
-    B.get('paint').box(x0 - 0.35, 0.02, z1, x1 + 0.35, 0.06, z1 + 0.35, cp, 'YzZ');
-    B.get('paint').box(x0 - 0.35, 0.02, z0, x0, 0.06, z1, cp, 'YxX');
-    B.get('paint').box(x1, 0.02, z0, x1 + 0.35, 0.06, z1, cp, 'YxX');
-    // lane stripes on the bottom (6 lanes along x)
+    B.get('satin').box(x0 - 0.35, 0.02, z0 - 0.35, x1 + 0.35, 0.06, z0, cp, 'YzZ');
+    B.get('satin').box(x0 - 0.35, 0.02, z1, x1 + 0.35, 0.06, z1 + 0.35, cp, 'YzZ');
+    B.get('satin').box(x0 - 0.35, 0.02, z0, x0, 0.06, z1, cp, 'YxX');
+    B.get('satin').box(x1, 0.02, z0, x1 + 0.35, 0.06, z1, cp, 'YxX');
     const lanes = 6, lw = (z1 - z0) / lanes;
     for (let i = 0; i < lanes; i++) {
       const zc = z0 + lw * (i + 0.5);
       B.get('paint').box(x0 + 1.5, -1.695, zc - 0.13, x1 - 1.5, -1.69, zc + 0.13, hexToRGB('#1c2f5a'), 'Y');
     }
-    // exit steps in one corner
     for (let k = 0; k < 4; k++) {
       const top = -1.7 + (k + 1) * 0.42;
       const sx0 = x0 + 0.02, sx1 = x0 + 0.02 + (4 - k) * 0.45;
@@ -401,6 +487,7 @@ export function buildBuilding(scene, world, T) {
 
   // ------------------------------------------------------------------ ceilings + lights
   const lightB = B.get('light');
+  const lightCenters = [];
   const addLights = (r, y, spacing = 4.2) => {
     const nx = Math.max(1, Math.floor((r[2] - r[0]) / spacing));
     const nz = Math.max(1, Math.floor((r[3] - r[1]) / spacing));
@@ -408,7 +495,10 @@ export function buildBuilding(scene, world, T) {
     for (let i = 0; i < nx; i++)
       for (let j = 0; j < nz; j++) {
         const cx = r[0] + sx * (i + 0.5), cz = r[1] + sz * (j + 0.5);
-        lightB.hquad(cx - 0.3, cz - 0.6, cx + 0.3, cz + 0.6, y - 0.012, false);
+        // lens just below a slightly larger metal trim ring
+        lightB.hquad(cx - 0.3, cz - 0.6, cx + 0.3, cz + 0.6, y - 0.022, false);
+        B.get('satin').box(cx - 0.35, y - 0.02, cz - 0.65, cx + 0.35, y - 0.004, cz + 0.65, hexToRGB('#d9dcdf'), 'yxXzZ');
+        lightCenters.push([cx, y, cz]);
       }
   };
   for (const { r, b } of blockRects) {
@@ -416,17 +506,16 @@ export function buildBuilding(scene, world, T) {
     const rects = b.levels === 2 ? subtractRects([r], stairRects) : [r];
     const tall = y > 5;
     for (const cr of rects) {
-      B.get(tall ? 'deck' : 'ceiling').box(cr[0], y, cr[1], cr[2], y + 0.08, cr[3], WHITE, 'y');
+      B.get(tall ? 'deck' : 'ceiling').box(cr[0], y, cr[1], cr[2], y + 0.08, cr[3], WHITE, 'yY');
       world.add(cr[0], y, cr[1], cr[2], y + 0.08, cr[3], 6);
       addLights(cr, y, tall ? 7 : 4.2);
     }
     if (b.levels === 2) {
-      B.get('ceiling').box(r[0], CEIL2[1], r[1], r[2], CEIL2[1] + 0.08, r[3], WHITE, 'y');
+      B.get('ceiling').box(r[0], CEIL2[1], r[1], r[2], CEIL2[1] + 0.08, r[3], WHITE, 'yY');
       world.add(r[0], CEIL2[1], r[1], r[2], CEIL2[1] + 0.08, r[3], 6);
       addLights(r, CEIL2[1]);
     }
   }
-  // soffits where ceiling heights change between blocks
   for (const { r, b } of blockRects)
     forEachEdgeInterval(r, (axis, c, p, q, out, inPt, outPt) => {
       const ob = blockAt(...outPt);
@@ -436,171 +525,146 @@ export function buildBuilding(scene, world, T) {
       segBox(B.get('wall'), axis, c, p, q, -0.05, 0.05, cin, cout + 0.02, wallColor[0]);
     });
 
-  // ------------------------------------------------------------------ exterior skin
-  const topOf = (b) => b.roof;
-  const brickB = B.get('brick');
-  const glassB = B.get('glass');
-  const frameB = B.get('frame');
-  const winInB = B.get('winIn');
+  // ------------------------------------------------------------------ exterior skin with openings
   const copeCol = hexToRGB('#d9d2c2');
-  for (const { r, b } of blockRects) {
-    // gather runs along each edge with constant (hOut, hIn)
-    const runs = [];
-    forEachEdgeInterval(r, (axis, c, p, q, out, inPt, outPt) => {
-      let hOut = 0;
-      // a neighbouring rect of the same block continues the building: no skin there
-      for (const br of blockRects) if (br.r !== r && inRect(br.r, outPt[0], outPt[1])) hOut = Math.max(hOut, br.b === b ? topOf(b) + PARAPET : topOf(br.b));
-      const hIn = topOf(b) + PARAPET;
-      if (hIn <= hOut + 0.01) return;
-      const last = runs[runs.length - 1];
-      if (last && last.axis === axis && Math.abs(last.c - c) < 1e-6 && last.hOut === hOut && Math.abs(last.q - p) < 1e-4) last.q = q;
-      else runs.push({ axis, c, p, q, out, hOut, hIn });
-    });
-    for (const run of runs) {
-      const { axis, c, p, q, out, hOut, hIn } = run;
-      const ents = hOut === 0 ? entrances.filter((e) => e.axis === axis && Math.abs(e.c - c) < 0.05 && e.b > p && e.a < q) : [];
-      // pieces between entrances
-      let cur = p - SK;
-      const cuts = ents.map((e) => [e.a, e.b]).sort((a, b) => a[0] - b[0]);
-      for (const [a, bnd] of cuts) {
-        segBox(brickB, axis, c, cur, a, 0, out * SK, hOut, hIn);
-        segCollider(axis, c, cur, a, 0, out * SK, hOut, hIn);
-        segBox(brickB, axis, c, a, bnd, 0, out * SK, 2.7, hIn);
-        cur = bnd;
-      }
-      segBox(brickB, axis, c, cur, q + SK, 0, out * SK, hOut, hIn);
-      segCollider(axis, c, cur, q + SK, 0, out * SK, hOut, hIn);
-      // coping
-      segBox(B.get('paint'), axis, c, p - SK - 0.04, q + SK + 0.04, -out * 0.04, out * (SK + 0.06), hIn, hIn + 0.14, copeCol);
-      // band at second-floor line
-      if (b.levels === 2 && hOut < 4.0) segBox(B.get('paint'), axis, c, p - SK - 0.02, q + SK + 0.02, out * SK, out * (SK + 0.05), 4.0, 4.45, copeCol, axis === 'z' ? (out > 0 ? 'ZyY' : 'zyY') : out > 0 ? 'XyY' : 'xyY');
-      // windows
-      if (b.windows === false) continue;
-      const rowsY = [[0.95, 2.45, 0]];
-      if (b.levels === 2) rowsY.push([5.15, 6.75, 1]);
-      for (const [y0, y1, lv] of rowsY) {
-        if (hOut > y0 - 0.3 || hIn < y1 + 0.6) continue;
-        const len = q - p - 1.6;
-        if (len < 1.6) continue;
-        const spacing = 3.2, ww = 1.8;
-        const n = Math.max(1, Math.floor(len / spacing));
-        const st = p + 0.8 + (len - (n - 1) * spacing) / 2;
-        for (let i = 0; i < n; i++) {
-          const m = st + i * spacing;
-          if (lv === 0 && ents.some((e) => m + ww / 2 > e.a - 0.5 && m - ww / 2 < e.b + 0.5)) continue;
-          const inPt = P(axis, c - out * 0.5, m);
-          if (stairRects.some((sr) => inRect(sr, inPt[0], inPt[1]))) continue;
-          const a = m - ww / 2, bb = m + ww / 2;
-          const face = c + out * (SK + 0.012);
-          glassB.vquad(axis, face, a, bb, y0, y1, out);
-          // frame
-          segBox(frameB, axis, c, a - 0.07, a, out * SK, out * (SK + 0.06), y0 - 0.07, y1 + 0.07);
-          segBox(frameB, axis, c, bb, bb + 0.07, out * SK, out * (SK + 0.06), y0 - 0.07, y1 + 0.07);
-          segBox(frameB, axis, c, a, bb, out * SK, out * (SK + 0.06), y0 - 0.07, y0);
-          segBox(frameB, axis, c, a, bb, out * SK, out * (SK + 0.06), y1, y1 + 0.07);
-          segBox(frameB, axis, c, a, bb, out * SK, out * (SK + 0.035), (y0 + y1) / 2 - 0.03, (y0 + y1) / 2 + 0.03);
-          // sill
-          segBox(B.get('paint'), axis, c, a - 0.1, bb + 0.1, out * SK, out * (SK + 0.12), y0 - 0.16, y0 - 0.07, copeCol);
-          // interior view of the window
-          if (hOut === 0 || lv === 1) winInB.vquad(axis, c - out * (WT / 2 + 0.014), a, bb, y0, y1, -out);
-        }
+  const frameB = B.get('frame');
+  const glassB = B.get('glass');
+  const outsideAll = (x, z) => !blockRects.some((br) => inRect(br.r, x, z));
+  for (const run of runs) {
+    const { axis, c, p, q, out, hOut, hIn, b } = run;
+    // stretch the skin around outside corners only (never into the building)
+    const extP = outsideAll(...P(axis, c + out * SK * 0.5, p - SK * 0.5)) ? SK : 0;
+    const extQ = outsideAll(...P(axis, c + out * SK * 0.5, q + SK * 0.5)) ? SK : 0;
+    const p0 = p - extP, q0 = q + extQ;
+    const bps = new Set([p0, q0]);
+    for (const o of run.openings) { bps.add(o.a); bps.add(o.b); }
+    const pts = [...bps].sort((m, n) => m - n);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], bq = pts[i + 1];
+      if (bq - a < 0.005) continue;
+      const m = (a + bq) / 2;
+      const holes = run.openings.filter((o) => o.a <= m && o.b >= m).map((o) => [o.y0, o.y1]);
+      for (const [s, e] of solidSpans(hOut, hIn, holes)) {
+        segBox(B.get('brick'), axis, c, a, bq, 0, out * SK, s, e);
+        segCollider(axis, c, a, bq, 0, out * SK, s, e);
       }
     }
+    segBox(B.get('paint'), axis, c, p0 - 0.04, q0 + 0.04, -out * 0.04, out * (SK + 0.06), hIn, hIn + 0.14, copeCol);
+    if (b.levels === 2 && hOut < 4.0) segBox(B.get('paint'), axis, c, p0 - 0.02, q0 + 0.02, out * SK, out * (SK + 0.05), 4.0, 4.4, copeCol, axis === 'z' ? (out > 0 ? 'ZyY' : 'zyY') : out > 0 ? 'XyY' : 'xyY');
+    // water table (darker brick course) at the base
+    if (hOut === 0) segBox(B.get('paint'), axis, c, p0, q0, out * SK, out * (SK + 0.03), 0, 0.45, hexToRGB('#5d2c22'), axis === 'z' ? (out > 0 ? 'ZY' : 'zY') : out > 0 ? 'XY' : 'xY');
+  }
+  // window glazing, frames and sills
+  for (const w of windows) {
+    const { axis, c, out, a, b: bw, y0, y1 } = w;
+    const gc = c + out * SK * 0.55;
+    glassB.vquad(axis, gc, a, bw, y0, y1, out);
+    segCollider(axis, c, a, bw, out * SK * 0.5, out * SK * 0.6, y0, y1, 15);
+    const f0 = out * SK * 0.45, f1 = out * SK * 0.7;
+    segBox(frameB, axis, c, a, a + 0.06, f0, f1, y0, y1);
+    segBox(frameB, axis, c, bw - 0.06, bw, f0, f1, y0, y1);
+    segBox(frameB, axis, c, a, bw, f0, f1, y1 - 0.06, y1);
+    segBox(frameB, axis, c, a, bw, f0, f1, y0, y0 + 0.06);
+    const mid = (a + bw) / 2;
+    segBox(frameB, axis, c, mid - 0.03, mid + 0.03, f0, f1, y0, y1);
+    segBox(frameB, axis, c, a, bw, f0, f1, y0 + (y1 - y0) * 0.68 - 0.025, y0 + (y1 - y0) * 0.68 + 0.025);
+    // stone sill outside, painted stool inside
+    segBox(B.get('paint'), axis, c, a - 0.08, bw + 0.08, out * SK * 0.7, out * (SK + 0.07), y0 - 0.1, y0, copeCol);
+    segBox(B.get('satin'), axis, c, a - 0.05, bw + 0.05, -out * (WT / 2 + 0.1), out * SK * 0.45, y0 - 0.03, y0, hexToRGB('#f1efe9'));
   }
 
   // ------------------------------------------------------------------ roofs + rooftop units
-  const roofB = B.get('roof');
   for (const { r, b } of blockRects) {
-    roofB.box(r[0], b.roof - 0.3, r[1], r[2], b.roof, r[3], WHITE, 'Y');
+    B.get('roof').box(r[0], b.roof - 0.3, r[1], r[2], b.roof, r[3], WHITE, 'Yy');
+    world.add(r[0], b.roof - 0.3, r[1], r[2], b.roof, r[3], 16);
   }
   const hvac = hexToRGB('#b9bcbf');
   for (const b of blocks) {
     for (const r of b.R) {
       const area = (r[2] - r[0]) * (r[3] - r[1]);
-      const n = Math.min(6, Math.floor(area / 700));
+      const n = Math.min(6, Math.floor(area / 900));
       for (let i = 0; i < n; i++) {
         const w = 2 + R() * 3, d = 2 + R() * 3, h = 1 + R() * 1.4;
         const cx = r[0] + 3 + R() * Math.max(0.1, r[2] - r[0] - 6 - w);
         const cz = r[1] + 3 + R() * Math.max(0.1, r[3] - r[1] - 6 - d);
-        B.get('paint').box(cx, b.roof, cz, cx + w, b.roof + h, cz + d, hvac);
+        B.get('satin').box(cx, b.roof, cz, cx + w, b.roof + h, cz + d, hvac);
+        B.get('frame').box(cx + 0.3, b.roof + h, cz + 0.3, cx + w - 0.3, b.roof + h + 0.05, cz + d - 0.3);
       }
     }
   }
 
-  // water surface
+  // ------------------------------------------------------------------ pool water + lane ropes
   const water = new THREE.Mesh(
     new THREE.PlaneGeometry(poolPit[2] - poolPit[0], poolPit[3] - poolPit[1], 1, 1),
-    new THREE.MeshPhongMaterial({ map: T.water.clone(), color: '#bfefff', transparent: true, opacity: 0.72, shininess: 120, specular: '#ffffff', depthWrite: false }),
+    new THREE.MeshStandardMaterial({ map: T.water.clone(), normalMap: T.waterN.clone(), normalScale: new THREE.Vector2(0.35, 0.35), color: '#9fe3f5', roughness: 0.04, metalness: 0, transparent: true, opacity: 0.78, depthWrite: false, envMapIntensity: 1.3 }),
   );
-  water.material.map.repeat.set((poolPit[2] - poolPit[0]) / 4, (poolPit[3] - poolPit[1]) / 4);
-  water.material.map.needsUpdate = true;
+  for (const t of [water.material.map, water.material.normalMap]) {
+    t.repeat.set((poolPit[2] - poolPit[0]) / 4, (poolPit[3] - poolPit[1]) / 4);
+    t.needsUpdate = true;
+  }
   water.rotation.x = -Math.PI / 2;
   water.position.set((poolPit[0] + poolPit[2]) / 2, -0.22, (poolPit[1] + poolPit[3]) / 2);
   water.renderOrder = 2;
   scene.add(water);
-  // lane ropes
   {
     const lanes = 6, lw = (poolPit[3] - poolPit[1]) / lanes;
-    const ropeGeo = new THREE.CylinderGeometry(0.05, 0.05, poolPit[2] - poolPit[0] - 0.2, 6);
+    const ropeGeo = new THREE.CylinderGeometry(0.05, 0.05, poolPit[2] - poolPit[0] - 0.2, 8);
     ropeGeo.rotateZ(Math.PI / 2);
-    const mats = [new THREE.MeshLambertMaterial({ color: '#d8352a' }), new THREE.MeshLambertMaterial({ color: '#2b58c9' })];
+    const mats = [new THREE.MeshStandardMaterial({ color: '#d8352a', roughness: 0.5 }), new THREE.MeshStandardMaterial({ color: '#2b58c9', roughness: 0.5 })];
     for (let i = 1; i < lanes; i++) {
       const rope = new THREE.Mesh(ropeGeo, mats[i % 2]);
       rope.position.set((poolPit[0] + poolPit[2]) / 2, -0.2, poolPit[1] + lw * i);
       scene.add(rope);
     }
-    // starting blocks
     for (let i = 0; i < lanes; i++) {
       const zc = poolPit[1] + lw * (i + 0.5);
       const x = poolPit[2] + 0.55;
-      B.get('paint').box(x - 0.3, 0.02, zc - 0.3, x + 0.3, 0.75, zc + 0.3, hexToRGB('#e9ecef'));
-      B.get('paint').box(x - 0.32, 0.72, zc - 0.32, x + 0.32, 0.78, zc + 0.32, hexToRGB('#1f5fae'));
+      B.get('satin').box(x - 0.3, 0.02, zc - 0.3, x + 0.3, 0.75, zc + 0.3, hexToRGB('#e9ecef'));
+      B.get('satin').box(x - 0.32, 0.72, zc - 0.32, x + 0.32, 0.78, zc + 0.32, hexToRGB('#1f5fae'));
       world.add(x - 0.3, 0, zc - 0.3, x + 0.3, 0.78, zc + 0.3, 7);
     }
   }
 
   // ------------------------------------------------------------------ entrances (sliding glass doors)
-  const doorMat = new THREE.MeshPhongMaterial({ color: '#9fc6d8', transparent: true, opacity: 0.42, shininess: 100, specular: '#ffffff', depthWrite: false });
+  const doorMat = new THREE.MeshStandardMaterial({ color: '#b9d2de', roughness: 0.03, metalness: 0.1, transparent: true, opacity: 0.3, depthWrite: false, envMapIntensity: 2 });
   const slidingDoors = [];
   for (const e of entrances) {
-    const outerFace = e.out * (SK - 0.05);
     const fb = B.get('frame');
-    // frame (storefront) around the opening
-    segBox(fb, e.axis, e.c, e.a - 0.12, e.a, -WT / 2, outerFace + e.out * 0.1, 0, 2.7);
-    segBox(fb, e.axis, e.c, e.b, e.b + 0.12, -WT / 2, outerFace + e.out * 0.1, 0, 2.7);
-    segBox(fb, e.axis, e.c, e.a - 0.12, e.b + 0.12, -WT / 2, outerFace + e.out * 0.1, 2.55, 2.7);
-    // transom glass
-    // door leaves: two sliding panels
+    const o0 = -WT / 2, o1 = e.out * (SK - 0.02);
+    segBox(fb, e.axis, e.c, e.a - 0.12, e.a, o0, o1, 0, ENTRY_H);
+    segBox(fb, e.axis, e.c, e.b, e.b + 0.12, o0, o1, 0, ENTRY_H);
+    segBox(fb, e.axis, e.c, e.a - 0.12, e.b + 0.12, o0, o1, ENTRY_H - 0.15, ENTRY_H);
     const half = (e.b - e.a) / 2;
     const panels = [];
     for (const side of [-1, 1]) {
-      const g = new THREE.BoxGeometry(e.axis === 'z' ? half : 0.05, 2.5, e.axis === 'z' ? 0.05 : half);
+      const g = new THREE.BoxGeometry(e.axis === 'z' ? half : 0.05, ENTRY_H - 0.2, e.axis === 'z' ? 0.05 : half);
       const m = new THREE.Mesh(g, doorMat);
       m.renderOrder = 3;
       scene.add(m);
+      const fr = new THREE.Mesh(new THREE.BoxGeometry(e.axis === 'z' ? half : 0.06, 0.08, e.axis === 'z' ? 0.06 : half), M.frame);
+      fr.position.y = -(ENTRY_H - 0.2) / 2 + 0.04;
+      m.add(fr);
       panels.push({ m, side });
     }
     const [cx, cz] = P(e.axis, e.c + e.out * 0.12, e.mid);
     slidingDoors.push({ e, panels, cx, cz, half, open: 0 });
-    // exit sign inside
     const uv = atlas.get('EXIT', 'exit');
-    B.get('sign').vquad(e.axis, e.c - e.out * (WT / 2 + 0.03), e.mid - 0.4, e.mid + 0.4, 2.75, 2.95, -e.out, WHITE, uv);
-    // concrete pad outside
+    B.get('sign').vquad(e.axis, e.c - e.out * (WT / 2 + 0.03), e.mid - 0.4, e.mid + 0.4, ENTRY_H + 0.08, ENTRY_H + 0.28, -e.out, WHITE, uv);
     const [px, pz] = P(e.axis, e.c + e.out * (SK + 1.6), e.mid);
     const hw = e.b - e.a + 1.6;
-    if (e.axis === 'z') B.get('concrete').hquad(px - hw / 2, pz - 1.6, px + hw / 2, pz + 1.6, 0.03, true, hexToRGB('#d6d2c8'));
-    else B.get('concrete').hquad(px - 1.6, pz - hw / 2, px + 1.6, pz + hw / 2, 0.03, true, hexToRGB('#d6d2c8'));
+    if (e.axis === 'z') B.get('concrete').hquad(px - hw / 2, pz - 1.6, px + hw / 2, pz + 1.6, 0.045, true, hexToRGB('#d6d2c8'));
+    else B.get('concrete').hquad(px - 1.6, pz - hw / 2, px + 1.6, pz + hw / 2, 0.045, true, hexToRGB('#d6d2c8'));
   }
   const updateDoors = (px, pz, dt) => {
     for (const d of slidingDoors) {
       const dist = Math.hypot(px - d.cx, pz - d.cz);
-      const target = dist < 4.2 ? 1 : 0;
-      d.open += Math.sign(target - d.open) * Math.min(Math.abs(target - d.open), dt * 2.4);
+      const target = dist < 4.5 ? 1 : 0;
+      d.open += Math.sign(target - d.open) * Math.min(Math.abs(target - d.open), dt * 2.2);
+      const ease = d.open * d.open * (3 - 2 * d.open);
       for (const p of d.panels) {
-        const shift = p.side * (d.half / 2 + d.open * d.half * 0.92);
-        const m = d.e.mid + shift;
-        const [x, z] = P(d.e.axis, d.e.c + d.e.out * 0.12, m);
-        p.m.position.set(x, 1.27, z);
+        const shift = p.side * (d.half / 2 + ease * d.half * 0.92);
+        const [x, z] = P(d.e.axis, d.e.c + d.e.out * 0.12, d.e.mid + shift);
+        p.m.position.set(x, (ENTRY_H - 0.2) / 2 + 0.02, z);
       }
     }
   };
@@ -608,58 +672,38 @@ export function buildBuilding(scene, world, T) {
 
   // ------------------------------------------------------------------ porch canopy (main entrance)
   {
-    const pr = rectW(PORCH);
-    const [x0, z0, x1, z1] = pr;
-    B.get('paint').box(x0, 3.4, z0, x1 + SK, 4.35, z1, hexToRGB('#e7e1d4'));
-    B.get('roof').box(x0 + 0.1, 4.35, z0 + 0.1, x1, 4.4, z1 - 0.1, WHITE, 'Y');
-    world.add(x0, 3.4, z0, x1, 4.35, z1, 6);
+    const [x0, z0, x1, z1] = rectW(PORCH);
     const colC = hexToRGB('#e7e1d4');
-    for (const cz of [z0 + 0.6, (z0 + z1) / 2 - 2.6, (z0 + z1) / 2 + 2.6, z1 - 0.6])
-      for (const cx of [x0 + 0.6, (x0 + x1) / 2]) {
-        B.get('paint').box(cx - 0.3, 0, cz - 0.3, cx + 0.3, 3.4, cz + 0.3, colC);
-        world.add(cx - 0.3, 0, cz - 0.3, cx + 0.3, 3.4, cz + 0.3, 8);
-      }
-    B.get('concrete').hquad(x0 - 1, z0 - 1, x1, z1 + 1, 0.03, true, hexToRGB('#dcd8cf'));
+    B.get('paint').box(x0, 3.5, z0, x1 + SK, 4.45, z1, colC);
+    B.get('roof').box(x0 + 0.1, 4.45, z0 + 0.1, x1, 4.5, z1 - 0.1, WHITE, 'Y');
+    world.add(x0, 3.5, z0, x1 + SK, 4.45, z1, 6);
+    for (const cz of [z0 + 0.6, (z0 + z1) / 2 - 3.2, (z0 + z1) / 2 + 3.2, z1 - 0.6]) {
+      const cx = x0 + 0.6;
+      B.get('paint').box(cx - 0.32, 0, cz - 0.32, cx + 0.32, 3.5, cz + 0.32, colC);
+      B.get('paint').box(cx - 0.4, 0, cz - 0.4, cx + 0.4, 0.3, cz + 0.4, hexToRGB('#cfc8b9'));
+      world.add(cx - 0.4, 0, cz - 0.4, cx + 0.4, 3.5, cz + 0.4, 8);
+    }
+    // soffit downlights
+    for (let z = z0 + 2; z < z1 - 1; z += 3) lightB.hquad(x0 + 2.2, z - 0.25, x0 + 2.7, z + 0.25, 3.49, false);
+    B.get('concrete').hquad(x0 - 1.5, z0 - 1, x1, z1 + 1, 0.05, true, hexToRGB('#dcd8cf'));
     const tex = textTexture([{ text: 'WEST WINDSOR-PLAINSBORO HIGH SCHOOL NORTH', size: 0.62 }], { w: 2048, h: 220, bg: '#1f3f8f', fg: '#e8edf4', border: false });
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(z1 - z0 - 0.4, 0.8), new THREE.MeshBasicMaterial({ map: tex }));
-    sign.position.set(x0 - 0.01, 3.87, (z0 + z1) / 2);
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(z1 - z0 - 0.4, 0.8), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.5, emissive: '#ffffff', emissiveMap: tex, emissiveIntensity: 0.25 }));
+    sign.position.set(x0 - 0.01, 3.97, (z0 + z1) / 2);
     sign.rotation.y = -Math.PI / 2;
     scene.add(sign);
   }
 
-  // ------------------------------------------------------------------ materials + meshes
-  const lam = (o) => new THREE.MeshLambertMaterial(o);
+  // ------------------------------------------------------------------ meshes
   const materials = {
-    wall: lam({ map: T.block, vertexColors: true }),
-    brick: lam({ map: T.brick }),
-    floorTile: lam({ map: T.tile, vertexColors: true }),
-    carpet: lam({ map: T.carpet, vertexColors: true }),
-    wood: lam({ map: T.wood, vertexColors: true }),
-    ceramic: lam({ map: T.ceramic, vertexColors: true }),
-    concrete: lam({ map: T.concrete, vertexColors: true }),
-    stair: lam({ map: T.concrete, vertexColors: true }),
-    ceiling: lam({ map: T.ceiling, vertexColors: true, emissive: '#8f8b82', emissiveMap: T.ceiling }),
-    deck: lam({ color: '#6c7178', emissive: '#34383e' }),
-    roof: lam({ map: T.roof }),
-    paint: lam({ vertexColors: true }),
-    frame: lam({ color: '#3a3029' }),
-    metal: new THREE.MeshPhongMaterial({ color: '#8d949a', shininess: 60 }),
-    glass: new THREE.MeshPhongMaterial({ color: '#27394a', specular: '#9fb8cc', shininess: 90 }),
-    winIn: new THREE.MeshBasicMaterial({ color: '#cfe4f2' }),
-    light: new THREE.MeshBasicMaterial({ color: '#fffdf2' }),
-    sign: new THREE.MeshBasicMaterial({ map: atlas.texture }),
+    ...M,
+    sign: new THREE.MeshStandardMaterial({ map: atlas.texture, roughness: 0.45, emissive: '#ffffff', emissiveMap: atlas.texture, emissiveIntensity: 0.35 }),
   };
-  materials.light.userData.noShadow = true;
   materials.sign.userData.noShadow = true;
-  materials.winIn.userData.noShadow = true;
-  materials.ceiling.userData.noShadow = true;
   for (const m of B.toMeshes(materials)) scene.add(m);
 
-  // zones for location readout
   const zones = ZONES.map((z) => ({ ...z, R: rectW(z.r) }));
-
   return {
-    rooms, stairs: stairInfo, blocks, blockRects, zones, entrances, mapWalls, water, poolPit, house, atlas,
-    courtyard: rectW(COURTYARD), level1Rects, slabRects, updateDoors, blockAt, materials,
+    rooms, stairs: stairInfo, blocks, blockRects, zones, entrances, mapWalls, water, poolPit, house, atlas, windows,
+    courtyard: rectW(COURTYARD), level1Rects, slabRects, updateDoors, blockAt, materials, lightCenters,
   };
 }

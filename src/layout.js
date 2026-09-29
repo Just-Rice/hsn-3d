@@ -8,7 +8,8 @@
 // academic wing footprint (its bottom-center notch lines up with the Media Center roof,
 // and rooms 221-228 stack over 111-118 exactly as on the paper plans).
 
-export const S = 0.145; // meters per plan unit
+// 0.18 m/unit matches the satellite footprint (whole building ≈ 225 × 180 m; academic wing ≈ 98 × 83 m).
+export const S = 0.18; // meters per plan unit
 const OX = 180;
 const OY = 200;
 
@@ -53,10 +54,20 @@ export const BLOCKS = [
   { id: 'sgym', name: 'Auxiliary Gym', levels: 1, ceil: 8.5, roof: 9.5, windows: false, rects: [[1045, 1059, 1260, 1220]] },
 ];
 
+// The Main Hall is drawn narrow on the paper plan; it is widened by pushing everything south
+// of it (and west of the gym wing) down by HALL_SHIFT plan units.
+export const HALL_SHIFT = 16;
+const HALL_X = 1000;
+export const hy = (y) => (y >= 797 ? y + HALL_SHIFT : y);
+const shiftRect = (r) => (r[0] < HALL_X ? [r[0], hy(r[1]), r[2], hy(r[3])] : r);
+const shiftPt = (p) => (p[0] < HALL_X ? [p[0], hy(p[1])] : p);
+export const MAIN_HALL_Y = 782; // plan y of the Main Hall centerline
+
 export const COURTYARD = [375, 345, 665, 402];
-export const PORCH = [168, 735, 238, 798]; // covered main entrance (columns on the plan)
-export const POOL_PIT = [779, 599, 939, 691];
-export const STAGE = [363, 990, 526, 1100];
+export const PORCH = shiftRect([205, 735, 238, 810]); // covered main entrance (columns on the plan)
+// 25-yard, six-lane competition pool, centered where the plan draws it
+export const POOL = { cx: 859, cy: 645, len: 22.86, wid: 14.6 };
+export const STAGE = shiftRect([363, 990, 526, 1100]);
 
 // ---------------------------------------------------------------------------------------
 // Rooms. door spec: 'E' | 'E:0.3' (fraction along side) | 'E:0.3:2.4' (width in m)
@@ -175,7 +186,7 @@ export const ROOMS = [
     R('404', [1360, 921, 1456, 972], 'class', ['W']),
     R('405', [1360, 972, 1456, 1026], 'class', ['W']),
     // --- gyms
-    R('Main Gym', [1027, 778, 1241, 1026], 'gym', ['N:0.25:2.4', 'N:0.75:2.4', 'S:0.3:2.4', 'S:0.7:2.4', 'W:0.27:2.0', 'E:0.2:1.6'], { name: 'Main Gym', big: true }),
+    R('Main Gym', [1027, 778, 1241, 1026], 'gym', ['N:0.25:2.4', 'N:0.75:2.4', 'S:0.3:2.4', 'S:0.7:2.4', 'W:0.33:2.0', 'E:0.2:1.6'], { name: 'Main Gym', big: true }),
     R('', [1241, 778, 1343, 880], 'locker', ['E', 'W'], { name: 'Team Locker Room' }),
     R('', [1241, 880, 1343, 940], 'office', ['E'], { name: 'Athletic Office' }),
     R('', [1241, 940, 1343, 1026], 'locker', ['E', 'S'], { name: 'Team Room' }),
@@ -273,7 +284,7 @@ export const ZONES = [
 
 // Exterior doors. dir = outward normal. at = point on the exterior wall (plan units).
 export const ENTRANCES = [
-  { at: [238, 774], dir: 'W', w: 4.4, main: true, name: 'Main Entrance' },
+  { at: [238, MAIN_HALL_Y], dir: 'W', w: 5.2, main: true, name: 'Main Entrance' },
   { at: [217, 923], dir: 'W', w: 2.0, name: '300s Exit' },
   { at: [297, 1175], dir: 'S', w: 2.0, name: 'South Exit' },
   { at: [534, 1183], dir: 'S', w: 2.0, name: 'Theatre Hallway Exit' },
@@ -286,3 +297,9 @@ export const ENTRANCES = [
   { at: [1380, 1042], dir: 'E', w: 2.4, name: 'Gym Exit' },
   { at: [1027, 1042], dir: 'W', w: 2.4, name: 'Gym Exit' },
 ];
+
+// ---- apply the Main Hall widening to every rectangle and point south of it
+for (const b of BLOCKS) b.rects = b.rects.map(shiftRect);
+for (const list of ROOMS) for (const rm of list) rm.r = shiftRect(rm.r);
+for (const z of ZONES) z.r = shiftRect(z.r);
+for (const e of ENTRANCES) if (e.name !== 'Main Entrance') e.at = shiftPt(e.at);

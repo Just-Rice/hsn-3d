@@ -14,7 +14,8 @@ export class Character {
   constructor(look = DEFAULT_LOOK) {
     this.group = new THREE.Group();
     this.mats = {};
-    for (const k of Object.keys(DEFAULT_LOOK)) this.mats[k] = new THREE.MeshLambertMaterial({ color: look[k] || DEFAULT_LOOK[k] });
+    const rough = { skin: 0.6, hair: 0.75, shirt: 0.85, pants: 0.9, shoes: 0.5, pack: 0.7 };
+    for (const k of Object.keys(DEFAULT_LOOK)) this.mats[k] = new THREE.MeshStandardMaterial({ color: look[k] || DEFAULT_LOOK[k], roughness: rough[k] });
     const m = this.mats;
     const cap = (r, l, mat) => {
       const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(r, l, 4, 10), mat);
@@ -105,13 +106,32 @@ export class Character {
     for (const k of Object.keys(this.mats)) if (look[k]) this.mats[k].color.set(look[k]);
   }
 
-  animate(dt, speed, grounded, sprint) {
+  animate(dt, speed, grounded, sprint, swimming = false) {
     const moving = speed > 0.2;
-    this.phase += dt * (moving ? speed * 2.1 : 0);
+    this.phase += dt * (moving ? speed * 2.1 : swimming ? 2.2 : 0);
     const swing = moving ? Math.min(1, speed / 4) * (sprint ? 0.9 : 0.62) : 0;
     const k = Math.min(1, dt * 12);
     const lerp = (a, b) => a + (b - a) * k;
     const s = Math.sin(this.phase);
+    if (swimming) {
+      // freestyle when moving, treading water when not
+      const t = this.phase * (moving ? 1.6 : 1);
+      this.hips.rotation.x = lerp(this.hips.rotation.x, moving ? -1.2 : -0.15);
+      this.hips.position.y = lerp(this.hips.position.y, moving ? 1.05 : 0.92);
+      if (moving) {
+        this.arms[0].rotation.x = -t % (Math.PI * 2);
+        this.arms[1].rotation.x = -(t + Math.PI) % (Math.PI * 2);
+      } else {
+        this.arms[0].rotation.x = lerp(this.arms[0].rotation.x, -0.6 + Math.sin(t * 2) * 0.3);
+        this.arms[1].rotation.x = lerp(this.arms[1].rotation.x, -0.6 - Math.sin(t * 2) * 0.3);
+      }
+      this.legs[0].hp.rotation.x = Math.sin(t * 3) * 0.35;
+      this.legs[1].hp.rotation.x = -Math.sin(t * 3) * 0.35;
+      this.legs[0].knee.rotation.x = lerp(this.legs[0].knee.rotation.x, 0.2);
+      this.legs[1].knee.rotation.x = lerp(this.legs[1].knee.rotation.x, 0.2);
+      return;
+    }
+    this.hips.rotation.x = lerp(this.hips.rotation.x, 0);
     if (!grounded) {
       this.legs[0].hp.rotation.x = lerp(this.legs[0].hp.rotation.x, -0.5);
       this.legs[1].hp.rotation.x = lerp(this.legs[1].hp.rotation.x, 0.3);
@@ -145,9 +165,14 @@ export class Player {
     this.height = 1.75;
     this.step = 0.5;
     this.grounded = true;
+    this.swimming = false;
     this.visualY = 0;
     this.speed = 0;
     this.noclip = false;
+    this.coyote = 0; // seconds left to still jump after walking off a ledge
+    this.jumpBuf = 0; // seconds a jump press is remembered before landing
+    this.landing = 0; // impact of the last landing, for the camera dip
+    this.kick = 0; // seconds of a swimming kick-up (no buoyancy), for climbing out
   }
 
   teleport(x, y, z, yaw = null) {
@@ -158,22 +183,33 @@ export class Player {
     const g = this.world.groundAt(x, z, y + 0.3, this.step);
     this.pos.y = g;
     this.visualY = g;
+    this.grounded = true;
+    this.swimming = false;
+  }
+
+  waterAt(x, z) {
+    for (const w of this.world.waters || []) if (x >= w.r[0] && x <= w.r[2] && z >= w.r[1] && z <= w.r[3]) return w;
+    return null;
   }
 
   // move: {x (strafe), z (forward)} in camera space, camYaw
   update(dt, move, camYaw, sprint, jump) {
     const w = this.world;
-    const maxSpeed = sprint ? 7.8 : 4.2;
+    const water = this.waterAt(this.pos.x, this.pos.z);
+    this.swimming = !!water && this.pos.y < water.y - 1.0;
+    const maxSpeed = this.swimming ? (sprint ? 3.2 : 2.3) : sprint ? 7.6 : 4.3;
     // desired velocity in world space. camera looks along (-sin yaw, -cos yaw)
     const fx = -Math.sin(camYaw), fz = -Math.cos(camYaw);
     const rx = Math.cos(camYaw), rz = -Math.sin(camYaw);
     let dx = fx * move.z + rx * move.x, dz = fz * move.z + rz * move.x;
     const len = Math.hypot(dx, dz);
     if (len > 1) { dx /= len; dz /= len; }
-    const accel = this.grounded ? 14 : 4;
+    // snappy on the ground (quick start, quicker stop), floaty in the air and water
+    const accel = this.swimming ? 3.5 : this.grounded ? (len > 0.05 ? 16 : 24) : 3.2;
     const tx = dx * maxSpeed, tz = dz * maxSpeed;
-    this.vel.x += (tx - this.vel.x) * Math.min(1, accel * dt);
-    this.vel.z += (tz - this.vel.z) * Math.min(1, accel * dt);
+    const k = 1 - Math.exp(-accel * dt);
+    this.vel.x += (tx - this.vel.x) * k;
+    this.vel.z += (tz - this.vel.z) * k;
 
     if (len > 0.05) {
       const target = Math.atan2(-dx, -dz);
@@ -182,9 +218,9 @@ export class Player {
       this.yaw += d * Math.min(1, dt * 12);
     }
 
-    // horizontal move in substeps
+    // horizontal move in substeps; slide along walls
     const total = Math.hypot(this.vel.x, this.vel.z) * dt;
-    const n = Math.max(1, Math.ceil(total / 0.15));
+    const n = Math.max(1, Math.ceil(total / 0.12));
     for (let i = 0; i < n; i++) {
       const ox = this.pos.x, oz = this.pos.z;
       let nx = ox + (this.vel.x * dt) / n, nz = oz + (this.vel.z * dt) / n;
@@ -196,44 +232,81 @@ export class Player {
       this.pos.x = nx;
       this.pos.z = nz;
     }
+    // lose the velocity that went into a wall, so you don't stick to it
+    if (dt > 0) {
+      const mx = (this.pos.x - this.prevX) / dt, mz = (this.pos.z - this.prevZ) / dt;
+      if (Number.isFinite(mx) && Math.hypot(mx, mz) < Math.hypot(this.vel.x, this.vel.z) - 0.5) {
+        this.vel.x = mx;
+        this.vel.z = mz;
+      }
+    }
+    this.prevX = this.pos.x;
+    this.prevZ = this.pos.z;
 
-    // vertical
+    // jump: buffered presses and a little coyote time
+    this.jumpBuf = jump ? 0.15 : Math.max(0, this.jumpBuf - dt);
+    this.coyote = this.grounded ? 0.12 : Math.max(0, this.coyote - dt);
     const ground = w.groundAt(this.pos.x, this.pos.z, this.pos.y, this.step);
-    if (jump && this.grounded) {
-      this.vel.y = 5.2;
+
+    if (this.swimming) {
+      // buoyancy toward floating with the shoulders at the surface, plus drag
+      const floatY = water.y - 1.32;
+      if (this.kick > 0) this.vel.y -= 15 * dt;
+      else this.vel.y += ((floatY - this.pos.y) * 14 - this.vel.y * 4) * dt;
+      if (this.jumpBuf > 0 && this.kick <= 0) {
+        this.vel.y = 7.2; // kick up, enough to climb out at the wall
+        this.kick = 0.5;
+        this.jumpBuf = 0;
+      }
       this.grounded = false;
-    }
-    if (this.grounded && this.vel.y <= 0) {
-      if (ground >= this.pos.y - this.step) {
-        this.pos.y = ground; // follow steps up and down
-        this.vel.y = 0;
-      } else {
-        this.grounded = false;
-      }
-    }
-    if (!this.grounded) {
-      this.vel.y -= 16 * dt;
       this.pos.y += this.vel.y * dt;
-      const ceil = w.ceilingAt(this.pos.x, this.pos.z, this.pos.y + 0.6);
-      if (this.pos.y + this.height > ceil) {
-        this.pos.y = ceil - this.height;
-        this.vel.y = Math.min(0, this.vel.y);
-      }
       const g2 = w.groundAt(this.pos.x, this.pos.z, this.pos.y, this.step);
-      if (this.pos.y <= g2) {
-        this.pos.y = g2;
-        this.vel.y = 0;
-        this.grounded = true;
+      if (this.pos.y < g2) { this.pos.y = g2; this.vel.y = Math.max(0, this.vel.y); }
+    } else {
+      if (this.jumpBuf > 0 && (this.grounded || this.coyote > 0)) {
+        this.vel.y = 5.3;
+        this.grounded = false;
+        this.coyote = 0;
+        this.jumpBuf = 0;
+      }
+      if (this.grounded && this.vel.y <= 0) {
+        if (ground >= this.pos.y - this.step) {
+          this.pos.y = ground; // follow steps up and down
+          this.vel.y = 0;
+        } else {
+          this.grounded = false;
+        }
+      }
+      if (!this.grounded) {
+        // a bit more gravity on the way down feels less floaty
+        this.vel.y -= (this.vel.y > 0 ? 15 : 21) * dt;
+        this.vel.y = Math.max(this.vel.y, -30);
+        if (water && this.pos.y < water.y && this.kick <= 0) this.vel.y *= 1 - Math.min(1, dt * 6);
+        this.pos.y += this.vel.y * dt;
+        const ceil = w.ceilingAt(this.pos.x, this.pos.z, this.pos.y + 0.6);
+        if (this.pos.y + this.height > ceil) {
+          this.pos.y = ceil - this.height;
+          this.vel.y = Math.min(0, this.vel.y);
+        }
+        const g2 = w.groundAt(this.pos.x, this.pos.z, this.pos.y, this.step);
+        if (this.pos.y <= g2) {
+          this.landing = Math.min(0.22, Math.max(0, -this.vel.y - 3) * 0.03);
+          this.pos.y = g2;
+          this.vel.y = 0;
+          this.grounded = true;
+        }
       }
     }
+    this.landing = Math.max(0, this.landing - dt * 0.9);
+    this.kick = Math.max(0, this.kick - dt);
     // smoothed visual height (stairs)
     this.visualY += (this.pos.y - this.visualY) * Math.min(1, dt * 18);
-    if (Math.abs(this.pos.y - this.visualY) > 1.2) this.visualY = this.pos.y;
+    if (Math.abs(this.pos.y - this.visualY) > 1.2 || this.swimming || !this.grounded) this.visualY = this.pos.y;
 
     this.speed = Math.hypot(this.vel.x, this.vel.z);
     this.char.group.position.set(this.pos.x, this.visualY, this.pos.z);
     this.char.group.rotation.y = this.yaw;
-    this.char.animate(dt, this.speed, this.grounded, sprint);
+    this.char.animate(dt, this.speed, this.grounded, sprint, this.swimming);
   }
 
   get level() {
@@ -260,7 +333,16 @@ export class FollowCamera {
     this.dist = Math.max(1.6, Math.min(14, this.dist * (1 + d)));
   }
   update(dt, player) {
-    const eyeH = this.firstPerson ? 1.62 : 1.5;
+    // widen the view a little at a run
+    const fovT = 65 + Math.max(0, Math.min(1, (player.speed - 4.6) / 2.6)) * 7;
+    if (Math.abs(this.cam.fov - fovT) > 0.05) {
+      this.cam.fov += (fovT - this.cam.fov) * Math.min(1, dt * 5);
+      this.cam.updateProjectionMatrix();
+    }
+    let eyeH = this.firstPerson ? 1.62 : 1.5;
+    if (this.firstPerson && player.grounded && player.speed > 0.3) eyeH += Math.abs(Math.sin(player.char.phase)) * 0.035 * Math.min(1, player.speed / 4) - 0.017;
+    if (player.swimming) eyeH = 1.45;
+    eyeH -= player.landing;
     this.target.set(player.pos.x, player.visualY + eyeH, player.pos.z);
     const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
     const dir = new THREE.Vector3(-Math.sin(this.yaw) * cp, sp, -Math.cos(this.yaw) * cp); // look direction
@@ -275,8 +357,8 @@ export class FollowCamera {
     const bx = this.target.x - dir.x * want, by = this.target.y - dir.y * want, bz = this.target.z - dir.z * want;
     const f = this.world.raycast(this.target.x, this.target.y, this.target.z, bx, by, bz, 0.18);
     const d = Math.max(0.5, want * f);
-    // pull in fast, ease out slow
-    this.curDist += (d - this.curDist) * Math.min(1, dt * (d < this.curDist ? 20 : 4));
+    // pull in at once (never show the inside of a wall), ease back out
+    this.curDist = d < this.curDist ? d : this.curDist + (d - this.curDist) * Math.min(1, dt * 4);
     this.cam.position.set(this.target.x - dir.x * this.curDist, this.target.y - dir.y * this.curDist, this.target.z - dir.z * this.curDist);
     this.cam.lookAt(this.target);
     // fade the character when the camera is very close

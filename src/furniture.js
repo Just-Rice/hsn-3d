@@ -1,7 +1,7 @@
 // Room furnishings: classroom desks, lab benches, theatre seats, gym courts + bleachers,
 // cafeteria tables, library stacks, lockers along the hallways, etc.
 import * as THREE from 'three';
-import { LEVEL_H, STAGE, rectW, wz } from './layout.js';
+import { LEVEL_H, STAGE, rectW, wz, hy } from './layout.js';
 import { Batches, GeoBuilder, hexToRGB, inRect, WHITE } from './geo.js';
 import { rng, textTexture } from './textures.js';
 
@@ -41,6 +41,42 @@ class Props {
   }
 }
 
+// A meter of shelf: spines of varied width, height and color, 0.32 m tall
+function booksTexture() {
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 164;
+  const g = c.getContext('2d');
+  const r = rng(77);
+  g.fillStyle = '#2a1e14';
+  g.fillRect(0, 0, 512, 164);
+  const cols = ['#8e2a2a', '#1f4f8f', '#2f6e45', '#c7962c', '#5a3f8a', '#e2dccb', '#2b2b2b', '#a85a2a', '#3f7f8f', '#7a1f3d'];
+  for (let x = 0; x < 512; ) {
+    const w = 10 + Math.floor(r() * 20);
+    if (r() < 0.04) { x += w; continue; } // a gap on the shelf
+    const h = 164 * (0.7 + r() * 0.3);
+    const col = cols[Math.floor(r() * cols.length)];
+    const lean = r() < 0.05 ? 3 : 0;
+    g.fillStyle = col;
+    g.fillRect(x + lean, 164 - h, w - 1, h);
+    g.fillStyle = 'rgba(255,255,255,0.10)';
+    g.fillRect(x + lean, 164 - h, 2, h);
+    g.fillStyle = 'rgba(0,0,0,0.25)';
+    g.fillRect(x + lean + w - 3, 164 - h, 2, h);
+    if (r() < 0.7) {
+      g.fillStyle = r() < 0.5 ? 'rgba(235,215,150,0.85)' : 'rgba(255,255,255,0.7)';
+      g.fillRect(x + lean + 2, 164 - h * 0.8, w - 5, 4);
+      g.fillRect(x + lean + 2, 164 - h * 0.25, w - 5, 3);
+    }
+    x += w;
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  return t;
+}
+
 function protoGeo(fn) {
   const g = new GeoBuilder();
   fn(g);
@@ -49,15 +85,17 @@ function protoGeo(fn) {
 
 const C = (h) => hexToRGB(h);
 
-export function buildFurniture(scene, world, info, T) {
+// Colliders are kept to what you would actually bump into: desk and table tops, counters,
+// benches, shelving, bleachers. Chairs and stools don't collide, so rooms stay walkable.
+export function buildFurniture(scene, world, info, T, M) {
   const B = new Batches();
   const props = new Props();
   const R = rng(2024);
   const paint = B.get('paint');
 
   // ---- prototypes (origin at floor, "front" of a seated person faces local -z)
-  const lam = (o) => new THREE.MeshLambertMaterial(o);
-  const vc = lam({ vertexColors: true });
+  const std = (o) => new THREE.MeshStandardMaterial({ roughness: 0.55, ...o });
+  const vc = std({ vertexColors: true, roughness: 0.45, metalness: 0.1 });
   props.define('desk', protoGeo((g) => {
     g.box(-0.36, 0.7, -0.27, 0.36, 0.74, 0.27, C('#c9a36b'));
     for (const [x, z] of [[-0.32, -0.23], [0.32, -0.23], [-0.32, 0.23], [0.32, 0.23]]) g.box(x - 0.02, 0, z - 0.02, x + 0.02, 0.7, z + 0.02, C('#4a4a4a'));
@@ -107,8 +145,8 @@ export function buildFurniture(scene, world, info, T) {
     tex.colorSpace = THREE.SRGBColorSpace;
     const geo = new THREE.BoxGeometry(0.31, 1.85, 0.4);
     geo.translate(0, 0.925 + 0.1, 0);
-    const plain = lam({ color: '#ffffff' });
-    const front = lam({ map: tex });
+    const plain = std({ color: '#ffffff', roughness: 0.38, metalness: 0.45 });
+    const front = std({ map: tex, roughness: 0.38, metalness: 0.45 });
     props.define('locker', geo, [plain, plain, plain, plain, front, plain]);
   }
 
@@ -138,11 +176,12 @@ export function buildFurniture(scene, world, info, T) {
       return Math.hypot(x - dx, z - dz) < r;
     });
   // teaching wall: opposite the door unless that wall has windows, then a side wall
+  // (falls back to a door wall rather than covering windows)
   const frontSide = (rm) => {
     const doorSides = new Set(rm.doorList.map((d) => d.side));
     const d0 = rm.doorList[0] ? rm.doorList[0].side : 'N';
     const cands = [opposite[d0], ...(d0 === 'N' || d0 === 'S' ? ['W', 'E'] : ['N', 'S'])];
-    return cands.find((s) => !doorSides.has(s) && !isExterior(rm, s)) || opposite[d0];
+    return cands.find((s) => !doorSides.has(s) && !isExterior(rm, s)) || cands.find((s) => !isExterior(rm, s)) || opposite[d0];
   };
   // box in local frame (u0..u1, v0..v1) -> world
   const fbox = (f, u0, u1, v0, v1, y0, y1, color, key = 'paint', collide = false, tag = 9) => {
@@ -160,24 +199,53 @@ export function buildFurniture(scene, world, info, T) {
     world.add(Math.min(ax, bx), y, Math.min(az, bz), Math.max(ax, bx), y + top, Math.max(az, bz), 9);
   };
   const chairColors = ['#d9722b', '#2f7fb8', '#3f9a57', '#aeb6c1', '#b8433a', '#6b5ba8'];
-  const whiteboard = (f, y, w = 3.6) => {
-    const u0 = (f.W - w) / 2, u1 = u0 + w;
+  const whiteboard = (rm, f, y, w = 3.6) => {
+    let u0 = (f.W - w) / 2, u1 = u0 + w;
+    // slide or shrink it clear of any door on the same wall
+    for (const d of rm.doorList) {
+      const [a0, b0] = [f.at(u0, 0.1), f.at(u1, 0.1)];
+      const onWall = d.axis === 'z' ? Math.abs(a0[1] - d.c) < 0.3 : Math.abs(a0[0] - d.c) < 0.3;
+      if (!onWall) continue;
+      const lo = d.axis === 'z' ? Math.min(a0[0], b0[0]) : Math.min(a0[1], b0[1]);
+      const hi = d.axis === 'z' ? Math.max(a0[0], b0[0]) : Math.max(a0[1], b0[1]);
+      if (d.b + 0.3 < lo || d.a - 0.3 > hi) continue;
+      // door center in u
+      const du = [0, f.W].map((uu) => f.at(uu, 0.1)).map((p) => (d.axis === 'z' ? p[0] : p[1]));
+      const uc = ((d.mid - du[0]) / (du[1] - du[0])) * f.W;
+      const hw = (d.b - d.a) / 2 + 0.35;
+      if (uc > f.W / 2) { u1 = Math.min(u1, uc - hw); u0 = Math.max(0.5, u1 - w); }
+      else { u0 = Math.max(u0, uc + hw); u1 = Math.min(f.W - 0.5, u0 + w); }
+    }
+    if (u1 - u0 < 1.2) return;
     fbox(f, u0 - 0.05, u1 + 0.05, 0.1, 0.13, y + 0.85, y + 2.15, C('#9aa1a8'));
     fbox(f, u0, u1, 0.1, 0.145, y + 0.9, y + 2.1, C('#fbfbfb'));
     fbox(f, u0, u1, 0.1, 0.2, y + 0.86, y + 0.9, C('#9aa1a8'));
   };
-  const corkboard = (f, y) => {
-    // on a side wall: local u=0 wall, spanning v
+  // side walls of a frame: the u=0 wall and the u=W wall, as plan sides
+  const SIDE_U0 = { N: 'W', S: 'E', W: 'S', E: 'N' };
+  const corkboard = (rm, f, front, y) => {
     const v0 = f.D * 0.35, v1 = Math.min(f.D - 0.8, v0 + 2.2);
     if (v1 - v0 < 1) return;
-    fbox(f, 0.1, 0.13, v0, v1, y + 1.0, y + 2.0, C('#b88b58'));
+    const doorSides = new Set(rm.doorList.map((d) => d.side));
+    const s0 = SIDE_U0[front], s1 = opposite[s0];
+    const side = [s0, s1].find((sd) => !doorSides.has(sd) && !isExterior(rm, sd));
+    if (!side) return;
+    const [ua, ub, uc] = side === s0 ? [0.1, 0.13, 0.135] : [f.W - 0.13, f.W - 0.1, f.W - 0.135];
+    fbox(f, ua, ub, v0, v1, y + 1.0, y + 2.0, C('#b88b58'));
     for (let i = 0; i < 4; i++) {
       const pv = v0 + 0.2 + R() * (v1 - v0 - 0.6);
       const col = ['#f7f3e8', '#ffd966', '#9fd3f0', '#f4a6a6'][i % 4];
-      fbox(f, 0.13, 0.135, pv, pv + 0.3, y + 1.2 + R() * 0.4, y + 1.6 + R() * 0.3, C(col));
+      const [pa, pb] = side === s0 ? [ub, uc] : [uc, ua];
+      fbox(f, pa, pb, pv, pv + 0.3, y + 1.2 + R() * 0.4, y + 1.6 + R() * 0.3, C(col));
     }
   };
   const clock = (f, y) => place('clock', f, f.W / 2, f.D - 0.125, y + 2.55);
+  // vertical quad on the plane v = vPlane of frame f, facing -v (side -1) or +v (side 1)
+  const fquad = (f, key, u0, u1, vPlane, y0, y1, side, uv) => {
+    const [ax, az] = f.at(u0, vPlane), [bx, bz] = f.at(u1, vPlane), [nx, nz] = f.at(u0, vPlane + side);
+    if (Math.abs(ax - bx) > Math.abs(az - bz)) B.get(key).vquad('z', az, Math.min(ax, bx), Math.max(ax, bx), y0, y1, Math.sign(nz - az), WHITE, uv);
+    else B.get(key).vquad('x', ax, Math.min(az, bz), Math.max(az, bz), y0, y1, Math.sign(nx - ax), WHITE, uv);
+  };
   const fcollide = (f, u0, u1, v0, v1, y0, y1, tag = 9) => {
     const [ax, az] = f.at(u0, v0), [bx, bz] = f.at(u1, v1);
     world.add(Math.min(ax, bx), y0, Math.min(az, bz), Math.max(ax, bx), y1, Math.max(az, bz), tag);
@@ -214,9 +282,10 @@ export function buildFurniture(scene, world, info, T) {
     switch (rm.type) {
       case 'class':
       case 'music': {
-        const f = frameOf(rm, frontSide(rm));
-        whiteboard(f, y, Math.min(3.8, f.W - 1.4));
-        corkboard(f, y);
+        const front = frontSide(rm);
+        const f = frameOf(rm, front);
+        whiteboard(rm, f, y, Math.min(3.8, f.W - 1.4));
+        corkboard(rm, f, front, y);
         clock(f, y);
         const col = chairColors[rm.idx % chairColors.length];
         if (rm.type === 'music') {
@@ -233,24 +302,33 @@ export function buildFurniture(scene, world, info, T) {
           break;
         }
         // teacher desk
-        fbox(f, f.W - 2.4, f.W - 0.9, 1.0, 1.75, y, y + 0.76, C('#7a5634'), 'paint', true);
-        place('chair', f, f.W - 1.65, 2.1, y, Math.PI, '#444444');
-        const du = 1.05, dv = 1.25;
-        const nu = Math.floor((f.W - 1.4) / du), nv = Math.floor((f.D - 3.2) / dv);
-        const su = (f.W - (nu - 1) * du) / 2;
-        for (let i = 0; i < nu; i++)
-          for (let j = 0; j < nv; j++) {
-            const u = su + i * du, v = 2.6 + j * dv;
-            if (nearDoor(rm, ...f.at(u, v)) || nearDoor(rm, ...f.at(u, v + 0.42))) continue;
-            place('desk', f, u, v, y);
-            place('chair', f, u, v + 0.42, y, 0, col);
-            deskCollider(f, u, v, y);
+        {
+          const tu = nearDoor(rm, ...f.at(f.W - 1.65, 1.4), 2.4) ? 1.65 : f.W - 1.65;
+          fbox(f, tu - 0.75, tu + 0.75, 1.0, 1.75, y, y + 0.76, C('#7a5634'), 'paint', true);
+          fbox(f, tu - 0.72, tu + 0.72, 0.97, 1.78, y + 0.76, y + 0.79, C('#3b3632'));
+          place('chair', f, tu, 2.1, y, Math.PI, '#444444');
+        }
+        // desks in pairs with 1 m aisles between pairs and 1 m between rows
+        const pairW = 1.46, aisle = 1.0, dv = 1.55;
+        const np = Math.max(1, Math.floor((f.W - 1.2 + aisle) / (pairW + aisle)));
+        const nv = Math.floor((f.D - 3.4) / dv);
+        const su = (f.W - (np * pairW + (np - 1) * aisle)) / 2;
+        for (let i = 0; i < np; i++)
+          for (const k of [0, 1]) {
+            const u = su + i * (pairW + aisle) + 0.365 + k * 0.73;
+            for (let j = 0; j < nv; j++) {
+              const v = 2.7 + j * dv;
+              if (nearDoor(rm, ...f.at(u, v), 1.9) || nearDoor(rm, ...f.at(u, v + 0.45), 1.9)) continue;
+              place('desk', f, u, v, y);
+              place('chair', f, u, v + 0.45, y, (R() - 0.5) * 0.25, col);
+              deskCollider(f, u, v, y);
+            }
           }
         break;
       }
       case 'lab': {
         const f = frameOf(rm, frontSide(rm));
-        whiteboard(f, y, Math.min(3.8, f.W - 1.4));
+        whiteboard(rm, f, y, Math.min(3.8, f.W - 1.4));
         clock(f, y);
         // demo bench
         fbox(f, f.W / 2 - 1.3, f.W / 2 + 1.3, 1.1, 1.85, y, y + 0.92, C('#2a2a2a'), 'paint', true);
@@ -274,7 +352,7 @@ export function buildFurniture(scene, world, info, T) {
       }
       case 'art': {
         const f = frameOf(rm, frontSide(rm));
-        whiteboard(f, y, Math.min(3, f.W - 1.4));
+        whiteboard(rm, f, y, Math.min(3, f.W - 1.4));
         for (let v = 2.6; v < f.D - 1.8; v += 2.4)
           for (let u = 1.6; u < f.W - 1.4; u += 3.0) {
             fbox(f, u - 0.9, u + 0.9, v - 0.6, v + 0.6, y + 0.7, y + 0.78, C('#d9c8a3'), 'paint', true);
@@ -322,27 +400,28 @@ export function buildFurniture(scene, world, info, T) {
               place('chair', f, u + du, v + 0.85, y, 0, '#2f7fb8');
             }
           }
-        // bookshelves
+        // double-sided bookshelves; the books are a spine texture on both faces
         for (let v = f.D * 0.55; v < f.D - 1.2; v += 1.9)
           for (let u = 1.5; u < f.W - 3; u += 5.5) {
             fbox(f, u, u + 4.5, v, v + 0.45, y, y + 1.7, C('#8b6b4a'), 'paint', true);
-            for (let s = 0; s < 4; s++)
-              for (let k = 0; k < 14; k++) {
-                const bu = u + 0.1 + k * 0.31;
-                const colr = ['#b33a3a', '#2d5f9e', '#3d8b4f', '#d1a93a', '#6b4f9e', '#e7e2d3'][Math.floor(R() * 6)];
-                const h = 0.24 + R() * 0.1;
-                fbox(f, bu, bu + 0.26, v - 0.02, v + 0.47, y + 0.08 + s * 0.4, y + 0.08 + s * 0.4 + h, C(colr));
-              }
+            fbox(f, u - 0.02, u + 4.52, v - 0.02, v + 0.47, y + 1.7, y + 1.74, C('#6e5238'));
+            for (let s = 0; s < 4; s++) {
+              const y0 = y + 0.07 + s * 0.4, off = R() * 8;
+              fquad(f, 'books', u + 0.05, u + 4.45, v - 0.004, y0, y0 + 0.32, -1, [off, 0, off + 4.4, 1]);
+              fquad(f, 'books', u + 0.05, u + 4.45, v + 0.454, y0, y0 + 0.32, 1, [off + 3, 0, off + 7.4, 1]);
+            }
           }
         break;
       }
       case 'dining': {
+        // tables in rows with walkable gaps; benches are low enough to step over
         const f = frameOf(rm, 'W');
-        for (let v = 2.5; v < f.D - 1.5; v += 3.2)
-          for (let u = 2.0; u < f.W - 1.6; u += 2.3) {
+        for (let v = 2.8; v < f.D - 1.8; v += 3.6)
+          for (let u = 2.2; u < f.W - 1.8; u += 3.4) {
+            if (nearDoor(rm, ...f.at(u, v), 2.6)) continue;
             place('cafTable', f, u, v, y, Math.PI / 2);
-            const [ax, az] = f.at(u - 1.0, v - 1.2), [bx, bz] = f.at(u + 1.0, v + 1.2);
-            world.add(Math.min(ax, bx), y, Math.min(az, bz), Math.max(ax, bx), y + 0.76, Math.max(az, bz), 9);
+            fcollide(f, u - 0.4, u + 0.4, v - 1.2, v + 1.2, y, y + 0.76);
+            for (const s of [-1, 1]) fcollide(f, u + s * 0.72 - 0.14, u + s * 0.72 + 0.14, v - 1.15, v + 1.15, y, y + 0.47);
           }
         break;
       }
@@ -530,17 +609,17 @@ export function buildFurniture(scene, world, info, T) {
     const [sx, sz] = off(-0.8);
     g.box(sx - 0.08, y + 3.9, sz - 0.08, sx + 0.08, y + 7.0, sz + 0.08, C('#555'));
     const [rx, rz] = off(0.38);
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.23, 0.02, 6, 20), new THREE.MeshLambertMaterial({ color: '#e05a1c' }));
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.23, 0.02, 6, 20), std({ color: '#e05a1c', metalness: 0.6, roughness: 0.35 }));
     rim.rotation.x = Math.PI / 2;
     rim.position.set(rx, y + 3.05, rz);
     scene.add(rim);
-    const net = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.15, 0.4, 12, 1, true), new THREE.MeshLambertMaterial({ color: '#ffffff', transparent: true, opacity: 0.55, side: THREE.DoubleSide }));
+    const net = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.15, 0.4, 12, 1, true), std({ color: '#ffffff', transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
     net.position.set(rx, y + 2.85, rz);
     scene.add(net);
   }
   function banner(x, y, z, rotY, lines, w = 3, h = 4) {
     const tex = textTexture(lines, { w: 256, h: 340, bg: '#1f3f8f', fg: '#e8edf4', font: 'Georgia, serif' });
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshLambertMaterial({ map: tex }));
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), std({ map: tex, roughness: 0.85 }));
     m.position.set(x, y, z);
     m.rotation.y = rotY;
     scene.add(m);
@@ -576,9 +655,10 @@ export function buildFurniture(scene, world, info, T) {
         for (let i = 0; i < rows; i++) {
           const bx1 = wx0 + (rows - i) * depth;
           const top = (i + 1) * rise;
-          B.get('wood').box(wx0, 0, sa, bx1, top, sb, C('#d8b27a'));
+          // each row only fills its own strip, so no faces overlap
+          B.get('wood').box(i === rows - 1 ? wx0 : bx1 - depth, 0, sa, bx1, top, sb, C('#d8b27a'), 'XYzZ');
           world.add(wx0, 0, sa, bx1, top, sb, 11);
-          paint.box(bx1 - 0.02, top - 0.4, sa, bx1 + 0.01, top - 0.02, sb, C('#2a55b8'), 'X');
+          paint.box(bx1, top - 0.4, sa, bx1 + 0.012, top - 0.02, sb, C('#2a55b8'), 'X');
         }
       banner(x1 - 0.15, 6.8, cz - 6, -Math.PI / 2, [{ text: 'WW-P', size: 0.25 }, { text: 'NORTH', size: 0.25 }, { text: 'KNIGHTS', size: 0.3 }]);
       banner(x1 - 0.15, 6.8, cz + 6, -Math.PI / 2, [{ text: 'HOME OF', size: 0.2 }, { text: 'THE', size: 0.15 }, { text: 'KNIGHTS', size: 0.3 }]);
@@ -596,7 +676,7 @@ export function buildFurniture(scene, world, info, T) {
 
   function buildTheatre(rm) {
     const [x0, z0, x1] = rm.R;
-    const houseTop = wz(830), houseBot = wz(960);
+    const houseTop = wz(hy(830)), houseBot = wz(hy(960));
     const floorY = (z) => (z <= houseTop ? 0 : z >= houseBot ? -1.4 : (-1.4 * (z - houseTop)) / (houseBot - houseTop));
     const aisle = 1.5;
     const secs = [[x0 + aisle, (x0 + x1) / 2 - 0.8], [(x0 + x1) / 2 + 0.8, x1 - aisle]];
@@ -625,7 +705,7 @@ export function buildFurniture(scene, world, info, T) {
     paint.box(x0, 7.2, stZ - 0.1, x1, 14, stZ + 0.3, dark);
     world.add(x0, 0, stZ - 0.1, x0 + 2.2, 10, stZ + 0.3, 14);
     world.add(x1 - 2.2, 0, stZ - 0.1, x1, 10, stZ + 0.3, 14);
-    const curtain = new THREE.MeshLambertMaterial({ color: '#8b1622', side: THREE.DoubleSide });
+    const curtain = std({ color: '#7d1320', roughness: 0.95, side: THREE.DoubleSide });
     const pleat = (w, h) => {
       const g = new THREE.PlaneGeometry(w, h, 24, 1);
       const p = g.attributes.position;
@@ -660,7 +740,7 @@ export function buildFurniture(scene, world, info, T) {
       for (let i = 0; i < rows; i++) {
         const bz0 = z1 - 0.15 - (rows - i) * depth;
         const top = (i + 1) * rise;
-        B.get('paint').box(bxa, 0, bz0, bxb, top, z1 - 0.15, C(i % 2 ? '#aeb6c1' : '#2a55b8'));
+        B.get('paint').box(bxa, 0, bz0, bxb, top, i === rows - 1 ? z1 - 0.15 : bz0 + depth, C(i % 2 ? '#aeb6c1' : '#2a55b8'), 'xXYz');
         world.add(bxa, 0, bz0, bxb, top, z1 - 0.15, 11);
       }
     // lifeguard chair
@@ -673,10 +753,7 @@ export function buildFurniture(scene, world, info, T) {
   }
 
   // ---- materials + finalize
-  const materials = {
-    paint: lam({ vertexColors: true }),
-    wood: lam({ map: T.wood, vertexColors: true }),
-  };
+  const materials = { paint: M.paint, wood: M.wood, books: std({ map: booksTexture(), roughness: 0.75 }) };
   for (const m of B.toMeshes(materials)) scene.add(m);
   props.finalize(scene);
 }

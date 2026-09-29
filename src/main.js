@@ -1,14 +1,24 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { makeTextures } from './textures.js';
+import { makeMaterials } from './materials.js';
 import { CollisionWorld } from './physics.js';
 import { buildBuilding } from './building.js';
 import { buildFurniture } from './furniture.js';
-import { buildExterior } from './exterior.js';
+import { buildExterior, sat } from './exterior.js';
 import { Character, Player, FollowCamera, DEFAULT_LOOK } from './player.js';
 import { NavGrid } from './nav.js';
-import { renderMaps, drawMinimap, drawPath, MAP, roomAtMap } from './map.js';
+import { Balls } from './balls.js';
+import { renderMaps, drawMinimap, drawPath, drawLayers, roomAtMap, BUILDING_VIEW, MAP_BOUNDS } from './map.js';
 import { inRect } from './geo.js';
-import { LEVEL_H, wx, wz, STAGE } from './layout.js';
+import { LEVEL_H, wx, wz, hy, STAGE, MAIN_HALL_Y } from './layout.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -33,52 +43,195 @@ const isTouch = matchMedia('(pointer: coarse)').matches;
 const hot = window.claude?.hot;
 
 // ------------------------------------------------------------------ renderer + scene
+// Quality tiers. "high" is the full look: soft sun shadows, ambient occlusion, bloom, MSAA.
+const QUALITY = {
+  low: { dpr: 1, shadow: 0, post: false, ao: false, samples: 0 },
+  medium: { dpr: 1.5, shadow: 2048, post: true, ao: false, samples: 4 },
+  high: { dpr: 2, shadow: 4096, post: true, ao: true, samples: 4 },
+};
+let quality = store.get('quality', isTouch ? 'medium' : 'high');
+if (!QUALITY[quality]) quality = 'high';
+
 const canvas = $('#view');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isTouch, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1.5 : 2));
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setSize(innerWidth, innerHeight, false);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 0.92;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.15, 1800);
-const airFog = new THREE.Fog(0xcfdde8, 260, 1200);
+const FOG = new THREE.Color('#c6d4df');
+const airFog = new THREE.FogExp2(FOG, 0.0011);
 const waterFog = new THREE.FogExp2(0x2a8fb0, 0.16);
 scene.fog = airFog;
 
-// sky dome
-{
-  const g = new THREE.SphereGeometry(1500, 32, 16);
-  const m = new THREE.ShaderMaterial({
-    side: THREE.BackSide,
-    depthWrite: false,
-    fog: false,
-    uniforms: { top: { value: new THREE.Color('#4f8fd0') }, mid: { value: new THREE.Color('#bcd6ec') }, bot: { value: new THREE.Color('#e9eef0') } },
-    vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-    fragmentShader: `uniform vec3 top; uniform vec3 mid; uniform vec3 bot; varying vec3 vP;
-      void main(){ float h = vP.y; vec3 c = h > 0.0 ? mix(mid, top, pow(clamp(h,0.0,1.0), 0.6)) : mix(mid, bot, clamp(-h*4.0,0.0,1.0));
-      gl_FragColor = vec4(c,1.0); }`,
-  });
-  const sky = new THREE.Mesh(g, m);
-  sky.renderOrder = -1;
-  sky.frustumCulled = false;
-  scene.add(sky);
-  scene.userData.sky = sky;
-}
-
-const hemi = new THREE.HemisphereLight(0xe6f0ff, 0xa89a84, 1.5);
-scene.add(hemi);
-const sun = new THREE.DirectionalLight(0xfff0d8, 2.6);
+// sun from the south-southeast, about 50 degrees up (world +X is north, +Z is east)
 const sunDir = new THREE.Vector3(-0.5, 0.78, 0.38).normalize();
-sun.castShadow = store.get('shadows', !isTouch);
-sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -48, right: 48, top: 48, bottom: -48, near: 1, far: 300 });
-sun.shadow.bias = -0.0004;
-sun.shadow.normalBias = 0.05;
+
+// physically based sky; its output is scaled down to sit with the scene's light levels
+function makeSky(scale) {
+  const sky = new Sky();
+  sky.scale.setScalar(scale);
+  const u = sky.material.uniforms;
+  u.turbidity.value = 3.2;
+  u.rayleigh.value = 1.05;
+  u.mieCoefficient.value = 0.0045;
+  u.mieDirectionalG.value = 0.82;
+  u.sunPosition.value.copy(sunDir);
+  sky.material.fragmentShader = sky.material.fragmentShader.replace('gl_FragColor = vec4( retColor, 1.0 );', 'gl_FragColor = vec4( retColor * 0.62, 1.0 );');
+  return sky;
+}
+const sky = makeSky(1000);
+sky.material.depthWrite = false;
+sky.renderOrder = -1;
+sky.frustumCulled = false;
+scene.add(sky);
+
+// image-based lighting: the sky (with a grass-colored ground) outdoors, a neutral room indoors
+const pmrem = new THREE.PMREMGenerator(renderer);
+const skyEnv = (() => {
+  const s = new THREE.Scene();
+  s.add(makeSky(100));
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(60, 24), new THREE.MeshBasicMaterial({ color: new THREE.Color(0.11, 0.11, 0.1) }));
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -2;
+  s.add(ground);
+  return pmrem.fromScene(s, 0.02).texture;
+})();
+const roomEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environment = skyEnv;
+
+const hemi = new THREE.HemisphereLight(0xdfe9ff, 0x8a7f6c, 0.35);
+const HEMI_OUT = [new THREE.Color(0xdfe9ff), new THREE.Color(0x8a7f6c)];
+const HEMI_IN = [new THREE.Color(0xf4f1ea), new THREE.Color(0xa7a6a2)];
+// Ceiling fixtures near the player get real point lights (a small pool that follows you),
+// so hallways and rooms have pools of light instead of flat ambient.
+const BULBS = { low: 0, medium: 4, high: 8 };
+const bulbs = [];
+let bulbTimer = 0;
+function setupBulbs() {
+  const n = BULBS[quality];
+  while (bulbs.length > n) scene.remove(bulbs.pop().light);
+  while (bulbs.length < n) {
+    const light = new THREE.PointLight(0xf3f2ee, 0, 10, 2);
+    scene.add(light);
+    bulbs.push({ light, at: null, want: null, k: 0 });
+  }
+}
+function updateBulbs(dt, p, indoor) {
+  if (!bulbs.length) return;
+  bulbTimer -= dt;
+  if (bulbTimer <= 0) {
+    bulbTimer = 0.25;
+    // nearest fixtures on this floor, weighted toward where the camera looks
+    const fx = p.x - Math.sin(cam.yaw) * 3, fz = p.z - Math.cos(cam.yaw) * 3;
+    const near = info.lightCenters
+      .filter((c) => c[1] > p.y + 1.5 && c[1] < p.y + 9)
+      .map((c) => [c, (c[0] - fx) ** 2 + (c[2] - fz) ** 2])
+      .filter((e) => e[1] < 26 * 26)
+      .sort((a, b) => a[1] - b[1])
+      .slice(0, bulbs.length)
+      .map((e) => e[0]);
+    const free = [];
+    for (const b of bulbs) {
+      if (b.at && near.includes(b.at)) { b.want = b.at; near.splice(near.indexOf(b.at), 1); }
+      else free.push(b);
+    }
+    for (const b of free) b.want = near.shift() || null;
+  }
+  for (const b of bulbs) {
+    if (b.want !== b.at) {
+      b.k = Math.max(0, b.k - dt * 4);
+      if (b.k === 0) {
+        b.at = b.want;
+        if (b.at) b.light.position.set(b.at[0], b.at[1] - 0.35, b.at[2]);
+      }
+    } else if (b.at) b.k = Math.min(1, b.k + dt * 3);
+    b.light.intensity = b.at ? b.k * indoor * (b.at[1] - p.y > 5 ? 26 : 9) : 0;
+    b.light.distance = b.at && b.at[1] - p.y > 5 ? 16 : 10;
+  }
+}
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff1dc, 3.1);
+sun.shadow.bias = -0.0003;
 scene.add(sun, sun.target);
+// light-space axes, for snapping the shadow camera to whole texels (no shimmering)
+const sunRight = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), sunDir).normalize();
+const sunUp = new THREE.Vector3().crossVectors(sunDir, sunRight).normalize();
+const shadowCenter = new THREE.Vector3();
+let shadowHalf = 0, bldgShadow = null;
+
+// post-processing chain: scene (MSAA, HDR) -> GTAO -> bloom -> vignette/grade -> tone map + sRGB
+const VignetteShader = {
+  uniforms: { tDiffuse: { value: null }, amount: { value: 0.32 } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float amount; varying vec2 vUv;
+    void main(){
+      vec4 c = texture2D(tDiffuse, vUv);
+      vec2 d = vUv - 0.5;
+      float v = 1.0 - amount * smoothstep(0.18, 0.78, dot(d, d) * 1.6);
+      // slight filmic grade: warm highlights, cool shadows
+      float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+      c.rgb = mix(c.rgb * vec3(0.97, 1.0, 1.04), c.rgb * vec3(1.03, 1.0, 0.96), smoothstep(0.05, 0.9, l));
+      gl_FragColor = vec4(c.rgb * v, c.a);
+    }`,
+};
+// GTAO that ignores glass, water, fences and other see-through surfaces
+class AOPass extends GTAOPass {
+  overrideVisibility() {
+    const cache = this._visibilityCache;
+    this.scene.traverse((o) => {
+      cache.set(o, o.visible);
+      if (o.isPoints || o.isLine || o.isSprite || (o.material && (o.material.transparent || o.material.userData?.noAO))) o.visible = false;
+    });
+  }
+}
+let composer = null, aoPass = null, bloomPass = null;
+function setupPost() {
+  const q = QUALITY[quality];
+  if (composer) {
+    for (const ps of composer.passes) ps.dispose?.();
+    composer.dispose();
+  }
+  composer = aoPass = bloomPass = null;
+  const dpr = Math.min(devicePixelRatio, q.dpr);
+  renderer.setPixelRatio(dpr);
+  renderer.setSize(innerWidth, innerHeight, false);
+  if (!q.post) return;
+  const w = innerWidth * dpr, h = innerHeight * dpr;
+  const rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples: q.samples });
+  composer = new EffectComposer(renderer, rt);
+  composer.setPixelRatio(dpr);
+  composer.setSize(innerWidth, innerHeight);
+  composer.addPass(new RenderPass(scene, camera));
+  if (q.ao) {
+    aoPass = new AOPass(scene, camera, w, h);
+    aoPass.updateGtaoMaterial({ radius: 0.9, distanceExponent: 1.4, thickness: 1.5, scale: 1.15, samples: 12, screenSpaceRadius: false });
+    aoPass.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
+    aoPass.blendIntensity = 0.85;
+    composer.addPass(aoPass);
+  }
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(w / 2, h / 2), 0.32, 0.55, 0.92);
+  composer.addPass(bloomPass);
+  composer.addPass(new ShaderPass(VignetteShader));
+  composer.addPass(new OutputPass());
+}
+function applyQuality() {
+  const q = QUALITY[quality];
+  sun.castShadow = q.shadow > 0;
+  if (q.shadow && sun.shadow.mapSize.x !== q.shadow) {
+    sun.shadow.mapSize.set(q.shadow, q.shadow);
+    sun.shadow.map?.dispose();
+    sun.shadow.map = null;
+  }
+  shadowHalf = 0;
+  setupBulbs();
+  scene.traverse((o) => o.material && (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => (m.needsUpdate = true)));
+  setupPost();
+}
 
 // ------------------------------------------------------------------ UI helpers
 let toastTimer = 0;
@@ -96,30 +249,62 @@ const progress = (pct, msg) => {
 };
 
 // ------------------------------------------------------------------ build the world
-let info, ext, nav, maps, world, player, character, cam;
+let info, ext, nav, maps, world, player, character, cam, balls;
 let running = false;
 
 async function build() {
   await progress(5, 'Mixing brick and paint…');
   const T = makeTextures();
   for (const t of Object.values(T)) t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  const M = makeMaterials(T);
   world = new CollisionWorld();
   await progress(20, 'Raising walls from the floor plans…');
-  info = buildBuilding(scene, world, T);
+  info = buildBuilding(scene, world, T, M);
   await progress(45, 'Setting out desks, lockers and seats…');
-  buildFurniture(scene, world, info, T);
-  await progress(62, 'Paving the parking lot and lining the field…');
-  ext = buildExterior(scene, world, info, T);
+  buildFurniture(scene, world, info, T, M);
+  await progress(62, 'Paving the lots and lining the fields…');
+  ext = buildExterior(scene, world, info, T, M);
   await progress(78, 'Mapping hallways and stairwells…');
   nav = new NavGrid(world, info);
   maps = renderMaps(info, ext);
+  // a fixed shadow frustum that covers the whole building, used while indoors
+  {
+    let r0 = Infinity, r1 = -Infinity, u0 = Infinity, u1 = -Infinity;
+    const c = new THREE.Vector3();
+    for (const { r } of info.blockRects)
+      for (const x of [r[0], r[2]]) for (const z of [r[1], r[3]]) for (const y of [0, 16]) {
+        c.set(x, y, z);
+        r0 = Math.min(r0, c.dot(sunRight)); r1 = Math.max(r1, c.dot(sunRight));
+        u0 = Math.min(u0, c.dot(sunUp)); u1 = Math.max(u1, c.dot(sunUp));
+      }
+    const mid = new THREE.Vector3().addScaledVector(sunRight, (r0 + r1) / 2).addScaledVector(sunUp, (u0 + u1) / 2);
+    bldgShadow = { center: mid, half: Math.max(r1 - r0, u1 - u0) / 2 + 2 };
+  }
   await progress(92, 'Getting you ready for first period…');
   const look = { ...DEFAULT_LOOK, ...store.get('look', {}) };
   character = new Character(look);
   scene.add(character.group);
+  world.waters = [{ r: info.poolPit, y: -0.22 }];
   player = new Player(world, character);
   cam = new FollowCamera(camera, world);
+  // balls to kick around
+  balls = new Balls(scene, world);
+  for (const name of ['Main Gym', 'Auxiliary Gym']) {
+    const g = info.rooms.find((r) => r.name === name);
+    if (g) for (let i = 0; i < 3; i++) balls.add('basket', g.cx + (i - 1) * 1.6, 0.04, g.cz + (i % 2 ? 2.2 : -1.8));
+  }
+  {
+    const pl = info.poolPit;
+    balls.add('beach', (pl[0] + pl[2]) / 2 + 3, -0.5, (pl[1] + pl[3]) / 2);
+    balls.add('football', ext.stadium.x - 6, 0.04, ext.stadium.z + 3);
+    for (const [sx, sy] of [[375, 132], [494, 130], [340, 290]]) {
+      const [x, z] = sat(sx, sy);
+      balls.add('soccer', x, 0.02, z);
+    }
+    balls.add('soccer', ext.spawn[0] + 1.5, 0.05, ext.spawn[1] - 4);
+  }
   initPathViz();
+  applyQuality();
   await progress(100, 'Ready.');
 }
 
@@ -127,11 +312,16 @@ async function build() {
 const SPOTS = () => {
   const c = (rm) => [rm.cx, rm.level ? LEVEL_H : 0, rm.cz];
   const room = (name) => info.rooms.find((r) => r.name === name || r.label === name);
-  const st = [(wx(STAGE[0]) + wx(STAGE[2])) / 2, 0, wz(1045)];
+  const st = [(wx(STAGE[0]) + wx(STAGE[2])) / 2, 0, wz(hy(1045))];
   const cy = info.courtyard;
+  const s = ext.stadium, wl = ext.lots.westLot;
+  const [tx, tz] = sat(212.5, 789);
+  const [fx, fz] = sat(385, 130);
+  const [bx, bz] = sat(640, 902);
+  // yaw: 0 faces west (-Z), -PI/2 faces north (+X), PI/2 south, PI east
   return [
-    { name: 'Main entrance', sub: 'Front walk by the flagpole', p: [-8, 0, wz(774)], yaw: -Math.PI / 2 },
-    { name: 'Main Hall', sub: '1st floor', p: [wx(560), 0, wz(774)], yaw: -Math.PI / 2 },
+    { name: 'Main entrance', sub: 'Front walk off the bus loop', p: [ext.spawn[0], 0, ext.spawn[1]], yaw: -Math.PI / 2 },
+    { name: 'Main Hall', sub: '1st floor', p: [wx(560), 0, wz(MAIN_HALL_Y)], yaw: -Math.PI / 2 },
     { name: 'Main Office', sub: '1st floor', p: c(room('Main Office')), yaw: 0 },
     { name: 'Media Center', sub: '1st floor', p: c(room('Media Center')), yaw: 0 },
     { name: 'Courtyard', sub: 'Open-air, center of the A-wing', p: [(cy[0] + cy[2]) / 2, 0, (cy[1] + cy[3]) / 2], yaw: -Math.PI / 2 },
@@ -141,17 +331,21 @@ const SPOTS = () => {
     { name: 'Student Dining', sub: 'Upper dining', p: c(room('Upper Student Dining')), yaw: 0 },
     { name: 'A-Wing, 2nd floor', sub: 'Hallway by A203', p: [wx(363), LEVEL_H, wz(300)], yaw: Math.PI },
     { name: '200s Hallway', sub: '2nd floor, by 214', p: [wx(520), LEVEL_H, wz(535)], yaw: -Math.PI / 2 },
-    { name: 'Football stadium', sub: '50-yard line', p: [ext.stadium.x, 0, ext.stadium.z + 20], yaw: 0 },
-    { name: 'Home bleachers', sub: 'Top row', p: [ext.stadium.x - 20, 6, ext.stadium.z + 61.3], yaw: 0 },
-    { name: 'Tennis courts', sub: 'North of the A-wing', p: [72, 0, -36], yaw: 0 },
-    { name: 'Parking lot', sub: 'Off Grovers Mill Road', p: [-60, 0, 83], yaw: -Math.PI / 2 },
+    { name: 'Football stadium', sub: '50-yard line, facing the home stands', p: [s.x - 12, 0, s.z], yaw: -Math.PI / 2 },
+    { name: 'Home bleachers', sub: 'Top row, by the press box', p: [s.x + 58.4, 5.1, s.z + 14], yaw: Math.PI / 2 },
+    { name: 'Tennis courts', sub: 'Six courts west of the building', p: [tx, 0, tz], yaw: -Math.PI / 2 },
+    { name: 'Practice fields', sub: 'North of the stadium', p: [fx, 0, fz], yaw: -Math.PI / 2 },
+    { name: 'Bus loop', sub: 'Along the south face', p: [bx, 0, bz], yaw: Math.PI },
+    { name: 'Student parking', sub: 'West lot', p: [wl[0] + 2 * 18 + 9, 0, (wl[1] + wl[3]) / 2], yaw: Math.PI },
   ];
 };
 
 function teleport(p, yaw = null) {
   player.teleport(p[0], p[1], p[2], yaw);
+  // snap the indoor/outdoor lighting instead of fading it in
+  indoorK = info.blockAt(p[0], p[2]) && !inRect(info.courtyard, p[0], p[2]) ? 1 : 0;
   if (yaw !== null) cam.yaw = yaw;
-  cam.curDist = 0.6;
+  cam.curDist = cam.dist; // the camera's wall check pulls it in right away if needed
   locate();
 }
 
@@ -207,15 +401,7 @@ function locate() {
     }
   } else {
     floor = 'Outside';
-    const s = ext.stadium;
-    if (inRect(info.courtyard, x, z)) where = 'Courtyard';
-    else if (inRect([s.x - s.w / 2 - 5, s.z - s.h / 2 - 25, s.x + s.w / 2 + 5, s.z + s.h / 2 + 30], x, z)) where = 'Football Stadium';
-    else if (inRect([ext.lot[0], ext.lot[1], -44, ext.lot[3]], x, z)) where = 'Student Parking';
-    else if (inRect([ext.loop[0], ext.loop[1], 9, ext.loop[3]], x, z)) where = 'Front Entrance';
-    else if (inRect([25, -85, 110, -35], x, z)) where = 'Tennis Courts';
-    else if (x < -115 && x > -130) where = 'Grovers Mill Road';
-    else if (x <= -130) where = 'Community Middle School';
-    else where = 'Campus Grounds';
+    where = inRect(info.courtyard, x, z) ? 'Courtyard' : ext.areaAt(x, z);
   }
   const total = numbered().length;
   const html = `<div class="where">${where}</div><div class="sub"><span class="pill">${floor}</span>${sub ? `<span>${sub}</span>` : ''}<span class="count">${visited.size}/${total} rooms visited</span></div>`;
@@ -418,91 +604,176 @@ function toggleView() {
   toast(cam.firstPerson ? 'First-person view' : 'Third-person view', 1200);
 }
 
-// --- big map
+// --- big map (north-up; wheel or pinch to zoom, drag to pan)
 let mapLv = 0, mapHover = null;
-const MAPVIEW = { x0: -48, z0: -14, x1: 204, z1: 160 };
+const mapView = { cu: 0, cv: 0, k: 0 }; // center in map meters, CSS px per meter
+function fitMapView() {
+  const c = $('#bigmap');
+  const V = BUILDING_VIEW;
+  mapView.cu = (V.u0 + V.u1) / 2;
+  mapView.cv = (V.v0 + V.v1) / 2;
+  mapView.k = Math.min(c.clientWidth / (V.u1 - V.u0), c.clientHeight / (V.v1 - V.v0));
+}
+function clampMapView() {
+  const c = $('#bigmap');
+  const B = MAP_BOUNDS;
+  const kMin = Math.min(c.clientWidth / (B.u1 - B.u0), c.clientHeight / (B.v1 - B.v0));
+  mapView.k = Math.max(kMin, Math.min(30, mapView.k));
+  const hw = c.clientWidth / 2 / mapView.k, hh = c.clientHeight / 2 / mapView.k;
+  mapView.cu = Math.max(B.u0 + Math.min(hw, (B.u1 - B.u0) / 2), Math.min(B.u1 - Math.min(hw, (B.u1 - B.u0) / 2), mapView.cu));
+  mapView.cv = Math.max(B.v0 + Math.min(hh, (B.v1 - B.v0) / 2), Math.min(B.v1 - Math.min(hh, (B.v1 - B.v0) / 2), mapView.cv));
+}
 function mapToWorld(ev) {
   const c = $('#bigmap');
   const r = c.getBoundingClientRect();
-  const u = (ev.clientX - r.left) / r.width, v = (ev.clientY - r.top) / r.height;
-  return [MAPVIEW.x0 + u * (MAPVIEW.x1 - MAPVIEW.x0), MAPVIEW.z0 + v * (MAPVIEW.z1 - MAPVIEW.z0)];
+  const u = mapView.cu + (ev.clientX - r.left - r.width / 2) / mapView.k;
+  const v = mapView.cv + (ev.clientY - r.top - r.height / 2) / mapView.k;
+  return [-v, u];
 }
 function drawBigMap() {
   const c = $('#bigmap');
-  const cw = Math.min(2000, Math.round(c.clientWidth * Math.min(2, devicePixelRatio)));
-  const ch = Math.round((cw * (MAPVIEW.z1 - MAPVIEW.z0)) / (MAPVIEW.x1 - MAPVIEW.x0));
-  if (c.width !== cw) { c.width = cw; c.height = ch; }
+  const dpr = Math.min(2, devicePixelRatio);
+  const cw = Math.round(c.clientWidth * dpr), ch = Math.round(c.clientHeight * dpr);
+  if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
+  if (!mapView.k) fitMapView();
+  clampMapView();
   const g = c.getContext('2d');
-  const k = cw / ((MAPVIEW.x1 - MAPVIEW.x0) * MAP.ppm);
   g.setTransform(1, 0, 0, 1, 0, 0);
-  g.clearRect(0, 0, cw, ch);
-  g.setTransform(k, 0, 0, k, -(MAPVIEW.x0 - MAP.x0) * MAP.ppm * k, -(MAPVIEW.z0 - MAP.z0) * MAP.ppm * k);
-  g.drawImage(maps.maps[mapLv], 0, 0);
-  const X = (x) => (x - MAP.x0) * MAP.ppm, Z = (z) => (z - MAP.z0) * MAP.ppm;
+  g.fillStyle = '#6f9a50';
+  g.fillRect(0, 0, cw, ch);
+  const k = mapView.k * dpr;
+  g.setTransform(k, 0, 0, k, cw / 2 - mapView.cu * k, ch / 2 - mapView.cv * k);
+  drawLayers(g, maps, mapLv);
   if (mapHover) {
     const r = mapHover.R;
     g.strokeStyle = '#1f45a8';
     g.lineWidth = 3 / k;
-    g.strokeRect(X(r[0]), Z(r[1]), (r[2] - r[0]) * MAP.ppm, (r[3] - r[1]) * MAP.ppm);
+    g.strokeRect(r[1], -r[2], r[3] - r[1], r[2] - r[0]);
   }
-  if (navPath) drawPath(g, navPath, mapLv, 2.5 / k);
+  if (navPath) drawPath(g, navPath, mapLv, Math.max(0.5, 3 / k));
   if (navDest && navDest.lv === mapLv) {
     g.fillStyle = '#ff4d6d';
     g.beginPath();
-    g.arc(X(navDest.x), Z(navDest.z), 6 / k, 0, Math.PI * 2);
+    g.arc(navDest.z, -navDest.x, 6 / k, 0, Math.PI * 2);
     g.fill();
   }
   if (player.level === mapLv || !info.blockAt(player.pos.x, player.pos.z)) {
     g.save();
-    g.translate(X(player.pos.x), Z(player.pos.z));
-    g.rotate(-player.yaw);
+    g.translate(player.pos.z, -player.pos.x);
+    g.rotate(-player.yaw - Math.PI / 2);
+    g.scale(1 / k, 1 / k);
     g.fillStyle = '#ffd23f';
     g.strokeStyle = '#1a1a1a';
-    g.lineWidth = 2 / k;
+    g.lineWidth = 2;
     g.beginPath();
-    const s = 1 / k;
-    g.moveTo(0, -12 * s); g.lineTo(9 * s, 9 * s); g.lineTo(0, 4 * s); g.lineTo(-9 * s, 9 * s);
+    g.moveTo(0, -13); g.lineTo(10, 10); g.lineTo(0, 4); g.lineTo(-10, 10);
     g.closePath();
     g.fill();
     g.stroke();
     g.restore();
   }
-  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // compass
+  g.fillStyle = 'rgba(10,16,32,0.8)';
+  g.beginPath();
+  g.arc(c.clientWidth - 26, 26, 16, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = '#ffffff';
+  g.font = 'bold 13px system-ui, sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText('N', c.clientWidth - 26, 22);
+  g.beginPath();
+  g.moveTo(c.clientWidth - 26, 9); g.lineTo(c.clientWidth - 22, 15); g.lineTo(c.clientWidth - 30, 15);
+  g.fill();
   if (mapHover) {
-    const text = roomTitle(mapHover) + (mapHover.big || !/\d/.test(mapHover.label || '') ? '' : '');
-    g.font = `bold ${Math.round(15 * (cw / c.clientWidth))}px system-ui, sans-serif`;
+    const text = roomTitle(mapHover);
+    g.font = 'bold 15px system-ui, sans-serif';
+    g.textAlign = 'left';
     const w = g.measureText(text).width + 20;
     g.fillStyle = 'rgba(12,22,16,0.88)';
-    g.fillRect(10, 10, w, 30 * (cw / c.clientWidth));
+    g.fillRect(10, 10, w, 30);
     g.fillStyle = '#f3efe2';
-    g.textBaseline = 'middle';
-    g.fillText(text, 20, 10 + 15 * (cw / c.clientWidth));
+    g.fillText(text, 20, 25);
   }
 }
-$('#bigmap').addEventListener('mousemove', (e) => {
-  const [x, z] = mapToWorld(e);
-  const rm = roomAtMap(info, mapLv, x, z) || null;
-  if (rm !== mapHover) {
-    mapHover = rm;
+{
+  const bm = $('#bigmap');
+  const ptrs = new Map();
+  let moved = 0, pinch = 0;
+  bm.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const [x, z] = mapToWorld(e);
+    const f = Math.exp(-Math.sign(e.deltaY) * 0.18);
+    const r = bm.getBoundingClientRect();
+    mapView.k *= f;
+    clampMapView();
+    // keep the point under the cursor fixed
+    mapView.cu = z - (e.clientX - r.left - r.width / 2) / mapView.k;
+    mapView.cv = -x - (e.clientY - r.top - r.height / 2) / mapView.k;
     drawBigMap();
-  }
-});
-$('#bigmap').addEventListener('click', (e) => {
-  const [x, z] = mapToWorld(e);
-  const rm = roomAtMap(info, mapLv, x, z);
-  if (rm) setDestination(rm);
-});
-$('#bigmap').addEventListener('dblclick', (e) => {
-  const [x, z] = mapToWorld(e);
-  const rm = roomAtMap(info, mapLv, x, z);
-  if (rm) {
-    teleportToRoom(rm);
-    closeOverlays();
-  } else if (mapLv === 0) {
-    teleport([x, 0, z]);
-    closeOverlays();
-  }
-});
+  }, { passive: false });
+  bm.addEventListener('pointerdown', (e) => {
+    ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+    bm.setPointerCapture(e.pointerId);
+    moved = 0;
+    if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()];
+      pinch = Math.hypot(a[0] - b[0], a[1] - b[1]);
+    }
+  });
+  bm.addEventListener('pointermove', (e) => {
+    const p = ptrs.get(e.pointerId);
+    if (!p) {
+      if (e.pointerType === 'mouse') {
+        const [x, z] = mapToWorld(e);
+        const rm = roomAtMap(info, mapLv, x, z) || null;
+        if (rm !== mapHover) {
+          mapHover = rm;
+          drawBigMap();
+        }
+      }
+      return;
+    }
+    const dx = e.clientX - p[0], dy = e.clientY - p[1];
+    ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+    if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()];
+      const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      if (pinch) mapView.k *= d / pinch;
+      pinch = d;
+      moved += 10;
+    } else {
+      moved += Math.abs(dx) + Math.abs(dy);
+      mapView.cu -= dx / mapView.k;
+      mapView.cv -= dy / mapView.k;
+    }
+    drawBigMap();
+  });
+  const up = (e) => {
+    ptrs.delete(e.pointerId);
+    if (ptrs.size < 2) pinch = 0;
+  };
+  bm.addEventListener('pointerup', up);
+  bm.addEventListener('pointercancel', up);
+  bm.addEventListener('click', (e) => {
+    if (moved > 6) return;
+    const [x, z] = mapToWorld(e);
+    const rm = roomAtMap(info, mapLv, x, z);
+    if (rm) setDestination(rm);
+  });
+  bm.addEventListener('dblclick', (e) => {
+    const [x, z] = mapToWorld(e);
+    const rm = roomAtMap(info, mapLv, x, z);
+    if (rm) {
+      teleportToRoom(rm);
+      closeOverlays();
+    } else if (mapLv === 0 || !info.blockAt(x, z)) {
+      teleport([x, mapLv && info.blockAt(x, z) ? LEVEL_H : 0, z]);
+      closeOverlays();
+    }
+  });
+}
 $$('#mapfloor button').forEach((b) =>
   b.addEventListener('click', () => {
     mapLv = +b.dataset.lv;
@@ -611,7 +882,7 @@ function renderChar() {
     sw.appendChild(inp);
     box.append(l, sw);
   }
-  $('#optshadow').checked = sun.castShadow;
+  $$('#optq button').forEach((b) => b.classList.toggle('on', b.dataset.q === quality));
 }
 function setPart(k, col, rerender = true) {
   const look = currentLook();
@@ -625,10 +896,14 @@ $('#charreset').addEventListener('click', () => {
   character.setLook(DEFAULT_LOOK);
   renderChar();
 });
-$('#optshadow').addEventListener('change', (e) => {
-  sun.castShadow = e.target.checked;
-  store.set('shadows', sun.castShadow);
-});
+$$('#optq button').forEach((b) =>
+  b.addEventListener('click', () => {
+    quality = b.dataset.q;
+    store.set('quality', quality);
+    applyQuality();
+    renderChar();
+  }),
+);
 
 // ------------------------------------------------------------------ input
 const keys = new Set();
@@ -752,11 +1027,13 @@ if (isTouch) {
 
 addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight, false);
+  composer?.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   if (openName === 'map') drawBigMap();
 });
 
+let freeCam = null; // debug: [position, lookAt]
 // ------------------------------------------------------------------ main loop
 const clock = new THREE.Clock();
 const miniCtx = $('#mini').getContext('2d');
@@ -787,25 +1064,30 @@ function frame() {
     player.update(dt, { x: 0, z: 0 }, cam.yaw, false, false);
   }
   cam.update(dt, player);
+  if (freeCam) {
+    camera.position.set(...freeCam[0]);
+    camera.up.set(...(freeCam[2] || [0, 1, 0]));
+    camera.lookAt(...freeCam[1]);
+    camera.up.set(0, 1, 0);
+  }
+  balls.update(dt, player);
 
-  // lighting: follow the player; soften the sun indoors
+  // lighting
   const p = player.pos;
-  sun.target.position.set(Math.round(p.x), p.y, Math.round(p.z));
-  sun.position.copy(sun.target.position).addScaledVector(sunDir, 140);
   const inside = !!info.blockAt(p.x, p.z) && !inRect(info.courtyard, p.x, p.z);
   indoorK += ((inside ? 1 : 0) - indoorK) * Math.min(1, dt * 3);
-  sun.intensity = 2.6 - indoorK * 2.3;
-  hemi.intensity = 1.5 + indoorK * 0.55;
+  updateSun(p, inside);
+  updateBulbs(dt, p, indoorK);
 
   info.updateDoors(p.x, p.z, dt);
   const wm = info.water.material.map;
   wm.offset.x = (t * 0.03) % 1;
   wm.offset.y = (t * 0.017) % 1;
-  if (Math.hypot(p.x + 27, p.z - 74) < 160) ext.flag.userData.wave(t);
+  if (Math.hypot(p.x - ext.flagPos[0], p.z - ext.flagPos[1]) < 160) ext.flag.userData.wave(t);
 
   const uw = inRect(info.poolPit, camera.position.x, camera.position.z) && camera.position.y < -0.22;
   scene.fog = uw ? waterFog : airFog;
-  scene.userData.sky.position.copy(camera.position);
+  sky.position.copy(camera.position);
 
   updateNav(dt);
   if (dots.count) {
@@ -827,7 +1109,7 @@ function frame() {
     locate();
   }
   const mc = $('#mini');
-  drawMinimap(miniCtx, mc.width, maps.maps[player.level], p.x, p.z, cam.yaw, player.yaw, navPath, player.level, navDest && navDest.lv === player.level ? navDest : null);
+  drawMinimap(miniCtx, mc.width, maps, p.x, p.z, cam.yaw, player.yaw, navPath, player.level, navDest && navDest.lv === player.level ? navDest : null);
   fpsAcc += dt;
   fpsN++;
   if (fpsAcc > 0.5) {
@@ -835,7 +1117,45 @@ function frame() {
     fpsAcc = 0;
     fpsN = 0;
   }
-  renderer.render(scene, camera);
+  if (composer) composer.render(dt);
+  else renderer.render(scene, camera);
+}
+
+// Sun shadows: a tight frustum around the player outdoors, one covering the whole building
+// indoors (so rooms far down a hallway are still shaded by the roof). Without shadow maps
+// (low quality) the sun is dimmed indoors instead, since nothing would block it.
+function updateSun(p, inside) {
+  const q = QUALITY[quality];
+  const shadows = q.shadow > 0;
+  let half, center;
+  if (shadows && inside && bldgShadow) {
+    half = bldgShadow.half;
+    center = shadowCenter.copy(bldgShadow.center);
+  } else {
+    half = 42;
+    const texel = (2 * half) / (q.shadow || 2048);
+    center = shadowCenter.set(p.x, p.y, p.z);
+    const r = Math.round(center.dot(sunRight) / texel) * texel;
+    const u = Math.round(center.dot(sunUp) / texel) * texel;
+    const f = center.dot(sunDir);
+    center.set(0, 0, 0).addScaledVector(sunRight, r).addScaledVector(sunUp, u).addScaledVector(sunDir, f);
+  }
+  if (half !== shadowHalf) {
+    shadowHalf = half;
+    Object.assign(sun.shadow.camera, { left: -half, right: half, top: half, bottom: -half, near: 1, far: 600 });
+    sun.shadow.camera.updateProjectionMatrix();
+    sun.shadow.normalBias = ((2 * half) / (q.shadow || 2048)) * 1.4;
+  }
+  sun.target.position.copy(center);
+  sun.position.copy(center).addScaledVector(sunDir, 300);
+  const k = shadows ? 0 : indoorK;
+  sun.intensity = 3.1 * (1 - k * 0.85);
+  hemi.intensity = 0.35 + indoorK * 0.1;
+  hemi.color.lerpColors(HEMI_OUT[0], HEMI_IN[0], indoorK);
+  hemi.groundColor.lerpColors(HEMI_OUT[1], HEMI_IN[1], indoorK);
+  const env = indoorK > 0.5 ? roomEnv : skyEnv;
+  if (scene.environment !== env) scene.environment = env;
+  scene.environmentIntensity = indoorK > 0.5 ? 0.55 : 1.0;
 }
 
 // ------------------------------------------------------------------ boot
@@ -888,10 +1208,18 @@ window.__game = {
   get info() { return info; },
   get nav() { return nav; },
   teleport: (...a) => teleport(...a),
+  plan: (px, py) => [wx(px), wz(py)],
+  view: (p, yaw, pitch = -0.05, dist = null, fp = false) => { teleport(p, yaw); cam.yaw = yaw; cam.pitch = pitch; cam.firstPerson = fp; if (dist) cam.dist = cam.curDist = dist; },
   setDestination: (label, lv) => setDestination(info.rooms.find((r) => r.label === label && (lv === undefined || r.level === lv))),
   get navPath() { return navPath; },
   routeToRoom: (rm) => { setDestination(rm); const p = navPath; clearNav(); return p; },
   keys,
+  sat,
+  scene,
+  camera,
+  get balls() { return balls; },
+  freeCam: (pos, at, up) => { freeCam = pos ? [pos, at, up] : null; },
+  setQuality: (q) => { quality = q; applyQuality(); },
   start: () => $('#go').click(),
   renderer,
 };

@@ -3,7 +3,7 @@ import { LEVEL_H } from './layout.js';
 import { inRect } from './geo.js';
 
 const CS = 0.5; // cell size (m)
-const X0 = -50, Z0 = -12, X1 = 205, Z1 = 186;
+const X0 = -20, Z0 = -8, X1 = 238, Z1 = 192; // building footprint plus the front walk
 const NX = Math.ceil((X1 - X0) / CS), NZ = Math.ceil((Z1 - Z0) / CS), N = NX * NZ;
 
 export class NavGrid {
@@ -32,7 +32,8 @@ export class NavGrid {
       const feet = lv === 0 ? 0 : LEVEL_H;
       const bl = this.blocked[lv];
       for (const c of this.world.cols) {
-        if (c.y1 <= feet + 0.55 || c.y0 >= feet + 1.7) continue;
+        // low things are stepped over, except bleachers (tag 11), which routes go around
+        if ((c.y1 <= feet + 0.55 && c.tag !== 11) || c.y0 >= feet + 1.7 || c.y1 <= feet) continue;
         const i0 = Math.max(0, Math.floor((c.x0 - pad - X0) / CS)), i1 = Math.min(NX - 1, Math.floor((c.x1 + pad - X0) / CS));
         const k0 = Math.max(0, Math.floor((c.z0 - pad - Z0) / CS)), k1 = Math.min(NZ - 1, Math.floor((c.z1 + pad - Z0) / CS));
         for (let k = k0; k <= k1; k++)
@@ -192,7 +193,18 @@ export class NavGrid {
       if (n === start) break;
     }
     out.reverse();
-    return { points: simplify(out), length: G[goal] };
+    // walk the switchback instead of jumping between the landings
+    const pts = [];
+    for (let i = 0; i < out.length; i++) {
+      pts.push(out[i]);
+      const a = out[i], b = out[i + 1];
+      if (!b || a.lv === b.lv) continue;
+      const st = this.info.stairs.find((q) => q.via && (a.lv === 0 ? this.center(q.navA) : this.center(q.navB - N)).every((v, k) => Math.abs(v - (k ? a.z : a.x)) < 1e-6));
+      if (!st) continue;
+      const via = a.lv === 0 ? st.via : [...st.via].reverse();
+      for (const [x, z, h] of via) pts.push({ lv: h < 3 ? 0 : 1, x, z, h });
+    }
+    return { points: simplify(pts), length: G[goal] };
   }
 }
 

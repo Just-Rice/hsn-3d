@@ -129,7 +129,10 @@
   @media (prefers-reduced-motion: reduce) { #toast, #loadbar i { transition: none; } }
 </style>
 <script type="importmap">
-{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.min.js" } }
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.min.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
 </script>
 </head>
 <body>
@@ -158,7 +161,7 @@
   <div class="card panel">
     <div class="eyebrow">Home of the Northern Knights · Est. 1997</div>
     <h1>West Windsor-Plainsboro <span>High School North</span></h1>
-    <div class="lede">Walk the halls again. Every room from the first- and second-floor plans, from A100 to 229, plus the theatre, the pool, the gyms and the football field out back.</div>
+    <div class="lede">Walk the halls again. Every room from the first- and second-floor plans, from A100 to 229, plus the theatre, the pool and the gyms, on a campus traced from the satellite view: stadium, tennis courts, practice fields and all.</div>
     <div class="keys">
       <kbd>W A S D</kbd><span>Walk (arrow keys work too)</span>
       <kbd>Shift</kbd><span>Run</span>
@@ -205,8 +208,8 @@
   <div class="sheet panel" style="width:min(520px,100%)">
     <div class="row"><h2>Your character</h2><div class="spacer"></div><button class="btn" data-close>Done</button></div>
     <div class="swatches" id="charsw"></div>
-    <div class="row"><button class="btn" id="charreset">Reset to blue and silver</button><div class="spacer"></div>
-      <label class="check"><input type="checkbox" id="optshadow" /> Sun shadows</label></div>
+    <div class="row"><button class="btn" id="charreset">Reset to blue and silver</button></div>
+    <div class="row"><span class="muted">Graphics</span><div class="spacer"></div><div class="seg" id="optq" role="group" aria-label="Graphics quality"><button data-q="low">Low</button><button data-q="medium">Medium</button><button data-q="high">High</button></div></div>
   </div>
 </div>
 
