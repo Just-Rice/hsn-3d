@@ -217,13 +217,14 @@ const VignetteShader = {
       gl_FragColor = vec4(c.rgb * v, c.a);
     }`,
 };
-// GTAO that ignores glass, water, fences and other see-through surfaces
+// GTAO that ignores glass, water, fences, tree cards and other see-through surfaces (its depth
+// pass ignores alphaTest, so a cut-out billboard would shade as a solid rectangle)
 class AOPass extends GTAOPass {
   overrideVisibility() {
     const cache = this._visibilityCache;
     this.scene.traverse((o) => {
       cache.set(o, o.visible);
-      if (o.isPoints || o.isLine || o.isSprite || (o.material && (o.material.transparent || o.material.userData?.noAO))) o.visible = false;
+      if (o.isPoints || o.isLine || o.isSprite || (o.material && (o.material.transparent || o.material.alphaTest > 0 || o.material.userData?.noAO))) o.visible = false;
     });
   }
 }
@@ -1270,6 +1271,7 @@ window.__game = {
   keys,
   sat,
   sunDir,
+  levelH: LEVEL_H,
   scene,
   camera,
   get balls() { return balls; },

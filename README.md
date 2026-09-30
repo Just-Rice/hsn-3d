@@ -80,6 +80,7 @@ Every room is transcribed in [`src/layout.js`](src/layout.js) as rectangles in "
 ### What's approximate
 
 - The plans are photocopies with no scale bar, so dimensions are fitted, not surveyed.
+- Heights aren't on the plans either. Floors are 4.9 m (16 ft) apart, typical for a high school with ceilings around 3.7 m, so the two-story academic wing stands about 10 m tall. The main gym is 12.5 m to the roof, the natatorium 11 m, the theatre 13.5 m and its stage house 20 m.
 - Rooms the plans leave unlabeled are named generically (Office, Storage, Restroom), and furniture is mostly a best guess (classroom desks, lab benches, lockers along the hallways). The dining halls have round tables with curved benches, as they did in real life.
 - The facade follows a [2015 photo of the front](https://commons.wikimedia.org/wiki/File:WWPHS_North_front.jpg) (by Mr. Matté, CC BY 3.0): dark red-brown brick, small paired strip windows, a dark metal parapet cap and the portico with round white columns. Sides I have no photo of are assumed to match. The flat roofs, one- and two-story massing and tall gym, theatre and natatorium volumes come from the plans.
 - The site is traced by eye from one satellite image, so positions are good to a few meters. Community Middle School is a simple stand-in block, and cars, buses and trees are placed to look like the photo rather than copied one by one.

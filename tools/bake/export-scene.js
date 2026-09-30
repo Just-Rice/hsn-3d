@@ -97,8 +97,9 @@ async () => {
   // ceiling fixtures, with the floor they light
   const L = info.level1Rects;
   const fixtures = info.lightCenters.map(([x, y, z]) => {
-    const upper = y > 5 && L.some((r) => x >= r[0] && x <= r[2] && z >= r[1] && z <= r[3]) && y < 9;
-    return [x, y, z, upper ? 4.2 : 0];
+    const LH = g.levelH;
+    const upper = y > LH + 1 && y < 2 * LH && L.some((r) => x >= r[0] && x <= r[2] && z >= r[1] && z <= r[3]);
+    return [x, y, z, upper ? LH : 0];
   });
   const blob = new Uint8Array(offset);
   let o2 = 0;

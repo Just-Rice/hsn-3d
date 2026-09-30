@@ -12,13 +12,13 @@ import { packLightmaps } from './lightmap.js';
 
 const WT = 0.2; // interior wall thickness
 const SK = 0.32; // exterior brick skin thickness
-const PARAPET = 0.6;
+const PARAPET = 0.9;
 const L1_TOP = CEIL2[1] + 0.05;
 const EPS = 0.06;
 // window sill/head per level: the real facade has small strip windows, in pairs
-const WIN = [[1.05, 2.3], [LEVEL_H + 1.05, LEVEL_H + 2.3]];
+const WIN = [[1.1, 2.45], [LEVEL_H + 1.1, LEVEL_H + 2.45]];
 const WIN_W = 1.35, WIN_GAP = 0.4;
-const ENTRY_H = 2.7;
+const ENTRY_H = 3.0;
 
 const CARPETS = ['#6f84ad', '#9a6b4a', '#5d8f7c', '#8b6aa0', '#8f8a4a', '#a85f55', '#4f7d99', '#b08a3e'];
 
@@ -392,7 +392,9 @@ export function buildBuilding(scene, world, T, M) {
     };
     const landing = Math.min(2.0, D * 0.28);
     const F = D - landing;
-    const n = 12, tread = F / n, rise = LEVEL_H / (2 * n);
+    // about 18 cm risers, but never treads shallower than 24 cm
+    const n = Math.max(10, Math.min(Math.round(LEVEL_H / 2 / 0.178), Math.floor(F / 0.24)));
+    const tread = F / n, rise = LEVEL_H / (2 * n);
     const half = W / 2;
     const step = (s0, s1, t0, t1, top, k, noseAt) => {
       boxST(s0, s1, t0, t1, 0, top - 0.03, 'paint', stepCol);
@@ -529,7 +531,7 @@ export function buildBuilding(scene, world, T, M) {
   for (const { r, b } of blockRects) {
     const y = ceil0(b);
     const rects = b.levels === 2 ? subtractRects([r], stairRects) : [r];
-    const tall = y > 5;
+    const tall = y > 6; // gyms, pool, theatre, dining: exposed deck instead of ceiling tile
     for (const cr of rects) {
       B.get(tall ? 'deck' : 'ceiling').box(cr[0], y, cr[1], cr[2], y + 0.08, cr[3], WHITE, 'y');
       world.add(cr[0], y, cr[1], cr[2], y + 0.08, cr[3], 6);
@@ -577,7 +579,7 @@ export function buildBuilding(scene, world, T, M) {
       }
     }
     segBox(B.get('paint'), axis, c, p0 - 0.04, q0 + 0.04, -out * 0.04, out * (SK + 0.06), hIn, hIn + 0.14, copeCol);
-    if (b.levels === 2 && hOut < 4.0) segBox(B.get('paint'), axis, c, p0 - 0.02, q0 + 0.02, out * SK, out * (SK + 0.03), 4.02, 4.14, bandCol, axis === 'z' ? (out > 0 ? 'ZyY' : 'zyY') : out > 0 ? 'XyY' : 'xyY');
+    if (b.levels === 2 && hOut < LEVEL_H - 0.2) segBox(B.get('paint'), axis, c, p0 - 0.02, q0 + 0.02, out * SK, out * (SK + 0.03), LEVEL_H - 0.18, LEVEL_H - 0.06, bandCol, axis === 'z' ? (out > 0 ? 'ZyY' : 'zyY') : out > 0 ? 'XyY' : 'xyY');
     // water table (darker brick course) at the base
     if (hOut === 0) segBox(B.get('paint'), axis, c, p0, q0, out * SK, out * (SK + 0.03), 0, 0.45, hexToRGB('#5d2c22'), axis === 'z' ? (out > 0 ? 'ZY' : 'zY') : out > 0 ? 'XY' : 'xY');
   }
@@ -700,14 +702,14 @@ export function buildBuilding(scene, world, T, M) {
     // From the photo of the front: a flat-roofed portico with round white columns, a brick
     // fascia with a dark metal cap, and the school name in small metal letters.
     const [x0, z0, x1, z1] = rectW(PORCH);
-    const fy0 = 3.6, fy1 = 4.75;
+    const fy0 = 5.2, fy1 = 6.5; // tall columns, as in the photo
     B.get('brick').box(x0, fy0, z0, x1 + SK, fy1, z1, WHITE, 'xzZ');
     B.get('paint').box(x0 - 0.04, fy1, z0 - 0.04, x1 + SK, fy1 + 0.16, z1 + 0.04, copeCol);
     B.get('paint').box(x0 - 0.02, fy0 + 0.28, z0 - 0.02, x1, fy0 + 0.36, z1 + 0.02, bandCol, 'xzZ');
     B.get('roof').box(x0 + 0.1, fy1, z0 + 0.1, x1, fy1 + 0.05, z1 - 0.1, WHITE, 'Y');
     B.get('paint').hquad(x0 + 0.02, z0 + 0.02, x1, z1 - 0.02, fy0, false, hexToRGB('#e9e6de')); // soffit
     world.add(x0, fy0, z0, x1 + SK, fy1, z1, 6);
-    const colGeo = new THREE.CylinderGeometry(0.32, 0.32, fy0, 24);
+    const colGeo = new THREE.CylinderGeometry(0.38, 0.38, fy0, 24);
     colGeo.translate(0, fy0 / 2, 0);
     const colMat = new THREE.MeshStandardMaterial({ color: '#f2f0ea', roughness: 0.45 });
     const nCol = 5;
@@ -719,7 +721,7 @@ export function buildBuilding(scene, world, T, M) {
       col.castShadow = col.receiveShadow = true;
       scene.add(col);
       B.get('paint').box(cx - 0.4, 0, cz - 0.4, cx + 0.4, 0.12, cz + 0.4, hexToRGB('#d8d4ca'));
-      world.add(cx - 0.33, 0, cz - 0.33, cx + 0.33, fy0, cz + 0.33, 8);
+      world.add(cx - 0.39, 0, cz - 0.39, cx + 0.39, fy0, cz + 0.39, 8);
     }
     // soffit downlights
     for (let z = z0 + 2; z < z1 - 1; z += 3) lightB.hquad(x0 + 2.2, z - 0.25, x0 + 2.7, z + 0.25, fy0 - 0.01, false);
