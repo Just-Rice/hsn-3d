@@ -7,12 +7,13 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { makeTextures } from './textures.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { makeTextures, loadPhotoTextures } from './textures.js';
 import { makeMaterials } from './materials.js';
 import { CollisionWorld } from './physics.js';
 import { buildBuilding } from './building.js';
 import { buildFurniture } from './furniture.js';
-import { buildExterior, sat } from './exterior.js';
+import { buildExterior, loadCars, loadTrees, sat } from './exterior.js';
 import { Character, Player, FollowCamera, DEFAULT_LOOK } from './player.js';
 import { NavGrid } from './nav.js';
 import { Balls } from './balls.js';
@@ -93,7 +94,7 @@ scene.add(sky);
 
 // image-based lighting: the sky (with a grass-colored ground) outdoors, a neutral room indoors
 const pmrem = new THREE.PMREMGenerator(renderer);
-const skyEnv = (() => {
+let skyEnv = (() => {
   const s = new THREE.Scene();
   s.add(makeSky(100));
   const ground = new THREE.Mesh(new THREE.CircleGeometry(60, 24), new THREE.MeshBasicMaterial({ color: new THREE.Color(0.11, 0.11, 0.1) }));
@@ -162,8 +163,42 @@ const sun = new THREE.DirectionalLight(0xfff1dc, 3.1);
 sun.shadow.bias = -0.0003;
 scene.add(sun, sun.target);
 // light-space axes, for snapping the shadow camera to whole texels (no shimmering)
-const sunRight = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), sunDir).normalize();
-const sunUp = new THREE.Vector3().crossVectors(sunDir, sunRight).normalize();
+const sunRight = new THREE.Vector3(), sunUp = new THREE.Vector3();
+function setSunDir(v) {
+  sunDir.copy(v).normalize();
+  sunRight.crossVectors(new THREE.Vector3(0, 1, 0), sunDir).normalize();
+  sunUp.crossVectors(sunDir, sunRight).normalize();
+  sky.material.uniforms.sunPosition.value.copy(sunDir);
+}
+setSunDir(sunDir);
+// Photographed sky (Poly Haven HDRI, CC0, see assets/sky): its sun direction and haze color
+// are read before the world is built; the background and lighting stream in afterwards.
+let outdoorEnvIntensity = 1.0;
+async function loadSky() {
+  let meta;
+  try {
+    meta = await (await fetch('assets/sky/sky.json')).json();
+  } catch {
+    return;
+  }
+  setSunDir(new THREE.Vector3().fromArray(meta.sunDir));
+  airFog.color.set(meta.fog);
+  new THREE.TextureLoader().loadAsync('assets/sky/sky_bg.jpg').then((t) => {
+    t.mapping = THREE.EquirectangularReflectionMapping;
+    t.colorSpace = THREE.SRGBColorSpace;
+    scene.background = t;
+    scene.backgroundIntensity = 1.15;
+    sky.visible = false;
+  }).catch(() => {});
+  new RGBELoader().loadAsync('assets/sky/sky_env.hdr').then((t) => {
+    t.mapping = THREE.EquirectangularReflectionMapping;
+    const env = pmrem.fromEquirectangular(t).texture;
+    t.dispose();
+    if (scene.environment === skyEnv) scene.environment = env;
+    skyEnv = env;
+    outdoorEnvIntensity = meta.envIntensity;
+  }).catch(() => {});
+}
 const shadowCenter = new THREE.Vector3();
 let shadowHalf = 0, bldgShadow = null;
 
@@ -254,13 +289,17 @@ const progress = (pct, msg) => {
 // ------------------------------------------------------------------ build the world
 let info, ext, nav, maps, world, player, character, cam, balls;
 let baked = null; // lightmap manifest once the baked lighting has loaded
+let texturesReady = Promise.resolve(0);
 let running = false;
 
 async function build() {
+  await loadSky();
   await progress(5, 'Mixing brick and paint…');
   const T = makeTextures();
   for (const t of Object.values(T)) t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   const M = makeMaterials(T);
+  // photo-scanned textures stream in and replace the procedural ones
+  texturesReady = loadPhotoTextures(T).catch(() => 0);
   world = new CollisionWorld();
   await progress(20, 'Raising walls from the floor plans…');
   info = buildBuilding(scene, world, T, M);
@@ -268,6 +307,8 @@ async function build() {
   buildFurniture(scene, world, info, T, M);
   await progress(62, 'Paving the lots and lining the fields…');
   ext = buildExterior(scene, world, info, T, M);
+  loadCars(scene, ext).catch((e) => console.warn('car models unavailable', e));
+  loadTrees(scene, ext).catch((e) => console.warn('tree sprites unavailable', e));
   await progress(78, 'Mapping hallways and stairwells…');
   nav = new NavGrid(world, info);
   maps = renderMaps(info, ext);
@@ -1168,7 +1209,7 @@ function updateSun(p, inside) {
   hemi.groundColor.lerpColors(HEMI_OUT[1], HEMI_IN[1], indoorK);
   const env = indoorK > 0.5 ? roomEnv : skyEnv;
   if (scene.environment !== env) scene.environment = env;
-  scene.environmentIntensity = indoorK > 0.5 ? 0.55 : 1.0;
+  scene.environmentIntensity = indoorK > 0.5 ? 0.55 : outdoorEnvIntensity;
 }
 
 // ------------------------------------------------------------------ boot
@@ -1232,6 +1273,7 @@ window.__game = {
   scene,
   camera,
   get balls() { return balls; },
+  get texturesReady() { return texturesReady; },
   freeCam: (pos, at, up) => { freeCam = pos ? [pos, at, up] : null; },
   setQuality: (q) => { quality = q; applyQuality(); },
   start: () => $('#go').click(),

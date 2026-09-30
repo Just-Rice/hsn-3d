@@ -108,7 +108,8 @@ export function makeTextures() {
   // tooled groove that catches a little shadow.
   {
     const rows = 36, cols = 12, S = 1024, bh = S / rows, bw = S / cols;
-    const base = ['#8c4030', '#934632', '#86402e', '#974b35', '#8a3d2d', '#90452f'];
+    // dark red-brown, matched to a photo of the front of the school
+    const base = ['#6e2f24', '#763427', '#692c22', '#7c392b', '#723126', '#65291f'];
     const tones = [];
     for (let y = 0; y < rows; y++) for (let x = -1; x <= cols; x++) tones.push(shade(base[Math.floor(r() * base.length)], (r() - 0.5) * 0.045));
     const bricks = (g, fn) => {
@@ -130,7 +131,7 @@ export function makeTextures() {
       g.stroke();
     };
     put('brick', surface(S, 2.4, (g) => {
-      g.fillStyle = '#8b422f';
+      g.fillStyle = '#6e2f24';
       g.fillRect(0, 0, S, S);
       bricks(g, (x, y, k) => {
         g.fillStyle = tones[k];
@@ -603,4 +604,31 @@ export function textTexture(lines, { w = 1024, h = 256, bg = '#1f3f8f', fg = '#f
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
   return t;
+}
+
+// Photo-scanned CC0 textures (ambientCG, see assets/textures/CREDITS.md). They replace the
+// procedural ones in place once downloaded: the Texture objects are shared by every material
+// and copy, so swapping their images updates the whole scene.
+const PHOTO = {
+  ceiling: 3.85, // 2' acoustic tiles
+  carpet: 1.7,
+  wood: 0.9, // strip width comes out near a gym floor's 2 1/4" maple
+  concrete: 2.4,
+  asphalt: 2.6,
+  grass: 2.2,
+};
+export async function loadPhotoTextures(T, base = 'assets/textures/') {
+  const loader = new THREE.TextureLoader();
+  const swap = (tex, img, meters) => {
+    tex.image = img;
+    tex.repeat.set(1 / meters, 1 / meters);
+    tex.needsUpdate = true;
+  };
+  const jobs = Object.entries(PHOTO).map(async ([name, meters]) => {
+    const [map, nor] = await Promise.all([loader.loadAsync(`${base}${name}.jpg`), loader.loadAsync(`${base}${name}_n.jpg`)]);
+    swap(T[name], map.image, meters);
+    if (T[name + 'N']) swap(T[name + 'N'], nor.image, meters);
+  });
+  const res = await Promise.allSettled(jobs);
+  return res.filter((r) => r.status === 'fulfilled').length;
 }

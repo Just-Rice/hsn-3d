@@ -4,6 +4,7 @@
 async () => {
   const THREE = await import('three');
   const g = window.__game, info = g.info, scene = g.scene;
+  await g.texturesReady; // albedo comes from the final textures
   scene.updateMatrixWorld(true);
   // region: the building plus a margin
   let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;

@@ -1,12 +1,12 @@
 {
- "hash": "08da4537",
+ "hash": "42760147",
  "pages": 2,
  "files": [
   "page0.jpg",
   "page1.jpg"
  ],
- "intensity": 2.7397807822533182,
- "lmax": 0.8720993089675907,
+ "intensity": 2.695065835880093,
+ "lmax": 0.8578660994768151,
  "weights": {
   "fixtures": 0.38,
   "sky": 1.0,
@@ -19,5 +19,5 @@
  },
  "texel": 0.16,
  "denoiser": "oidn",
- "baked": "2026-09-29"
+ "baked": "2026-09-30"
 }

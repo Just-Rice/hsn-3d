@@ -15,7 +15,9 @@ const SK = 0.32; // exterior brick skin thickness
 const PARAPET = 0.6;
 const L1_TOP = CEIL2[1] + 0.05;
 const EPS = 0.06;
-const WIN = [[0.9, 2.5], [LEVEL_H + 0.9, LEVEL_H + 2.5]]; // window sill/head per level
+// window sill/head per level: the real facade has small strip windows, in pairs
+const WIN = [[1.05, 2.3], [LEVEL_H + 1.05, LEVEL_H + 2.3]];
+const WIN_W = 1.35, WIN_GAP = 0.4;
 const ENTRY_H = 2.7;
 
 const CARPETS = ['#6f84ad', '#9a6b4a', '#5d8f7c', '#8b6aa0', '#8f8a4a', '#a85f55', '#4f7d99', '#b08a3e'];
@@ -201,20 +203,23 @@ export function buildBuilding(scene, world, T, M) {
         const inPt = P(axis, c - out * 0.6, (u0 + u1) / 2);
         if (!onLevel(lv, inPt[0], inPt[1])) continue;
         if (stairRects.some((sr) => inRect(sr, inPt[0], inPt[1]))) continue;
-        const n = Math.max(1, Math.floor((len - 0.6) / 3.1));
+        // one pair of windows per ~6 m of wall, or a single window in a narrow bay
+        const n = Math.max(1, Math.floor((len - 0.6) / 6.2));
         const pitch = (len - 0.4) / n;
-        const ww = Math.min(2.2, pitch - 0.9);
-        if (ww < 1.0) continue;
+        const pair = pitch >= 2 * WIN_W + WIN_GAP + 0.9;
+        if (!pair && pitch < WIN_W + 0.9) continue;
         for (let k = 0; k < n; k++) {
           const m = u0 + 0.2 + pitch * (k + 0.5);
-          const a = m - ww / 2, bw = m + ww / 2;
-          if (run.openings.some((o) => o.entrance && bw > o.a - 0.6 && a < o.b + 0.6)) continue;
-          const w = { axis, c, out, a, b: bw, y0, y1, lv };
-          run.openings.push(w);
-          windows.push(w);
-          const key = lineKey(axis, c);
-          if (!windowsByLine[lv].has(key)) windowsByLine[lv].set(key, []);
-          windowsByLine[lv].get(key).push(w);
+          const spans = pair ? [[m - WIN_GAP / 2 - WIN_W, m - WIN_GAP / 2], [m + WIN_GAP / 2, m + WIN_GAP / 2 + WIN_W]] : [[m - WIN_W / 2, m + WIN_W / 2]];
+          if (run.openings.some((o) => o.entrance && spans[spans.length - 1][1] > o.a - 0.6 && spans[0][0] < o.b + 0.6)) continue;
+          for (const [a, bw] of spans) {
+            const w = { axis, c, out, a, b: bw, y0, y1, lv };
+            run.openings.push(w);
+            windows.push(w);
+            const key = lineKey(axis, c);
+            if (!windowsByLine[lv].has(key)) windowsByLine[lv].set(key, []);
+            windowsByLine[lv].get(key).push(w);
+          }
         }
       }
     }
@@ -546,7 +551,9 @@ export function buildBuilding(scene, world, T, M) {
     });
 
   // ------------------------------------------------------------------ exterior skin with openings
-  const copeCol = hexToRGB('#d9d2c2');
+  const copeCol = hexToRGB('#3a2c26'); // dark metal parapet cap
+  const bandCol = hexToRGB('#bfb6a6'); // thin light band at the second floor
+  const sillCol = hexToRGB('#5e2a21'); // brick rowlock sills
   const frameB = B.get('frame');
   const glassB = B.get('glass');
   const outsideAll = (x, z) => !blockRects.some((br) => inRect(br.r, x, z));
@@ -570,7 +577,7 @@ export function buildBuilding(scene, world, T, M) {
       }
     }
     segBox(B.get('paint'), axis, c, p0 - 0.04, q0 + 0.04, -out * 0.04, out * (SK + 0.06), hIn, hIn + 0.14, copeCol);
-    if (b.levels === 2 && hOut < 4.0) segBox(B.get('paint'), axis, c, p0 - 0.02, q0 + 0.02, out * SK, out * (SK + 0.05), 4.0, 4.4, copeCol, axis === 'z' ? (out > 0 ? 'ZyY' : 'zyY') : out > 0 ? 'XyY' : 'xyY');
+    if (b.levels === 2 && hOut < 4.0) segBox(B.get('paint'), axis, c, p0 - 0.02, q0 + 0.02, out * SK, out * (SK + 0.03), 4.02, 4.14, bandCol, axis === 'z' ? (out > 0 ? 'ZyY' : 'zyY') : out > 0 ? 'XyY' : 'xyY');
     // water table (darker brick course) at the base
     if (hOut === 0) segBox(B.get('paint'), axis, c, p0, q0, out * SK, out * (SK + 0.03), 0, 0.45, hexToRGB('#5d2c22'), axis === 'z' ? (out > 0 ? 'ZY' : 'zY') : out > 0 ? 'XY' : 'xY');
   }
@@ -585,11 +592,9 @@ export function buildBuilding(scene, world, T, M) {
     segBox(frameB, axis, c, bw - 0.06, bw, f0, f1, y0, y1);
     segBox(frameB, axis, c, a, bw, f0, f1, y1 - 0.06, y1);
     segBox(frameB, axis, c, a, bw, f0, f1, y0, y0 + 0.06);
-    const mid = (a + bw) / 2;
-    segBox(frameB, axis, c, mid - 0.03, mid + 0.03, f0, f1, y0, y1);
-    segBox(frameB, axis, c, a, bw, f0, f1, y0 + (y1 - y0) * 0.68 - 0.025, y0 + (y1 - y0) * 0.68 + 0.025);
-    // stone sill outside, painted stool inside
-    segBox(B.get('paint'), axis, c, a - 0.08, bw + 0.08, out * SK * 0.7, out * (SK + 0.07), y0 - 0.1, y0, copeCol);
+    segBox(frameB, axis, c, a, bw, f0, f1, y0 + (y1 - y0) * 0.62 - 0.025, y0 + (y1 - y0) * 0.62 + 0.025);
+    // brick sill outside, painted stool inside
+    segBox(B.get('paint'), axis, c, a - 0.05, bw + 0.05, out * SK * 0.7, out * (SK + 0.05), y0 - 0.1, y0, sillCol);
     segBox(B.get('satin'), axis, c, a - 0.05, bw + 0.05, -out * (WT / 2 + 0.1), out * SK * 0.45, y0 - 0.03, y0, hexToRGB('#f1efe9'));
   }
 
@@ -692,23 +697,36 @@ export function buildBuilding(scene, world, T, M) {
 
   // ------------------------------------------------------------------ porch canopy (main entrance)
   {
+    // From the photo of the front: a flat-roofed portico with round white columns, a brick
+    // fascia with a dark metal cap, and the school name in small metal letters.
     const [x0, z0, x1, z1] = rectW(PORCH);
-    const colC = hexToRGB('#e7e1d4');
-    B.get('paint').box(x0, 3.5, z0, x1 + SK, 4.45, z1, colC);
-    B.get('roof').box(x0 + 0.1, 4.45, z0 + 0.1, x1, 4.5, z1 - 0.1, WHITE, 'Y');
-    world.add(x0, 3.5, z0, x1 + SK, 4.45, z1, 6);
-    for (const cz of [z0 + 0.6, (z0 + z1) / 2 - 3.2, (z0 + z1) / 2 + 3.2, z1 - 0.6]) {
-      const cx = x0 + 0.6;
-      B.get('paint').box(cx - 0.32, 0, cz - 0.32, cx + 0.32, 3.5, cz + 0.32, colC);
-      B.get('paint').box(cx - 0.4, 0, cz - 0.4, cx + 0.4, 0.3, cz + 0.4, hexToRGB('#cfc8b9'));
-      world.add(cx - 0.4, 0, cz - 0.4, cx + 0.4, 3.5, cz + 0.4, 8);
+    const fy0 = 3.6, fy1 = 4.75;
+    B.get('brick').box(x0, fy0, z0, x1 + SK, fy1, z1, WHITE, 'xzZ');
+    B.get('paint').box(x0 - 0.04, fy1, z0 - 0.04, x1 + SK, fy1 + 0.16, z1 + 0.04, copeCol);
+    B.get('paint').box(x0 - 0.02, fy0 + 0.28, z0 - 0.02, x1, fy0 + 0.36, z1 + 0.02, bandCol, 'xzZ');
+    B.get('roof').box(x0 + 0.1, fy1, z0 + 0.1, x1, fy1 + 0.05, z1 - 0.1, WHITE, 'Y');
+    B.get('paint').hquad(x0 + 0.02, z0 + 0.02, x1, z1 - 0.02, fy0, false, hexToRGB('#e9e6de')); // soffit
+    world.add(x0, fy0, z0, x1 + SK, fy1, z1, 6);
+    const colGeo = new THREE.CylinderGeometry(0.32, 0.32, fy0, 24);
+    colGeo.translate(0, fy0 / 2, 0);
+    const colMat = new THREE.MeshStandardMaterial({ color: '#f2f0ea', roughness: 0.45 });
+    const nCol = 5;
+    for (let i = 0; i < nCol; i++) {
+      const cz = z0 + 0.7 + ((z1 - z0 - 1.4) * i) / (nCol - 1);
+      const cx = x0 + 0.7;
+      const col = new THREE.Mesh(colGeo, colMat);
+      col.position.set(cx, 0, cz);
+      col.castShadow = col.receiveShadow = true;
+      scene.add(col);
+      B.get('paint').box(cx - 0.4, 0, cz - 0.4, cx + 0.4, 0.12, cz + 0.4, hexToRGB('#d8d4ca'));
+      world.add(cx - 0.33, 0, cz - 0.33, cx + 0.33, fy0, cz + 0.33, 8);
     }
     // soffit downlights
-    for (let z = z0 + 2; z < z1 - 1; z += 3) lightB.hquad(x0 + 2.2, z - 0.25, x0 + 2.7, z + 0.25, 3.49, false);
+    for (let z = z0 + 2; z < z1 - 1; z += 3) lightB.hquad(x0 + 2.2, z - 0.25, x0 + 2.7, z + 0.25, fy0 - 0.01, false);
     B.get('concrete').hquad(x0 - 1.5, z0 - 1, x1, z1 + 1, 0.05, true, hexToRGB('#dcd8cf'));
-    const tex = textTexture([{ text: 'WEST WINDSOR-PLAINSBORO HIGH SCHOOL NORTH', size: 0.62 }], { w: 2048, h: 220, bg: '#1f3f8f', fg: '#e8edf4', border: false });
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(z1 - z0 - 0.4, 0.8), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.5, emissive: '#ffffff', emissiveMap: tex, emissiveIntensity: 0.25 }));
-    sign.position.set(x0 - 0.01, 3.97, (z0 + z1) / 2);
+    const tex = textTexture([{ text: 'WEST WINDSOR-PLAINSBORO HIGH SCHOOL NORTH', size: 0.7, font: 'Arial, Helvetica, sans-serif', weight: '600' }], { w: 2048, h: 110, bg: 'rgba(0,0,0,0)', fg: '#e9e4d8', border: false });
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(12, z1 - z0 - 2), 0.42), new THREE.MeshStandardMaterial({ map: tex, transparent: true, roughness: 0.35, metalness: 0.6 }));
+    sign.position.set(x0 - 0.012, (fy0 + 0.36 + fy1) / 2 + 0.02, (z0 + z1) / 2);
     sign.rotation.y = -Math.PI / 2;
     scene.add(sign);
   }

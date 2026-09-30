@@ -71,7 +71,9 @@ Every room is transcribed in [`src/layout.js`](src/layout.js) as rectangles in "
 
 **Graphics.** Materials are physically based (`src/materials.js`) with procedural color and normal maps (`src/textures.js`). The sky is a physical sky model that also lights the scene through image-based lighting outdoors; indoors a neutral room environment takes over. The sun casts soft shadows; indoors the shadow map covers the whole building so rooms far down a hallway are still shaded by the roof. The post-processing chain is ambient occlusion (GTAO), bloom, a light vignette and ACES tone mapping.
 
-**Materials.** Inside, the walls are painted cinder block (40 × 20 cm units with a pitted face and concave joints). Outside is modular brick whose mortar is the same color as the brick, so the joints read only as a shallow groove.
+**Materials.** Inside, the walls are painted cinder block (40 × 20 cm units with a pitted face and concave joints). Outside is modular brick whose mortar is the same color as the brick, so the joints read only as a shallow groove. Ceiling tile, carpet, the gym's maple floor, concrete, asphalt and grass are photo-scanned CC0 textures from [ambientCG](https://ambientcg.com) (see [`assets/textures/CREDITS.md`](assets/textures/CREDITS.md)); they stream in over procedural stand-ins.
+
+**Sky.** A photographed partly cloudy sky ([Poly Haven](https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky), CC0) is the backdrop and lights the outdoors; the sun direction comes from the photo. Parked cars and trucks are from Kenney's [Car Kit](https://kenney.nl/assets/car-kit) (CC0). Trees are Poly Haven tree models (CC0) rendered into sprites in Blender ([`tools/bake/tree_sprites.py`](tools/bake/tree_sprites.py)) and drawn as crossed billboards, so the woods can hold thousands of them.
 
 **Baked lighting.** The light from all ~1,400 ceiling fixtures, the daylight coming in through the windows and doors, and the sun's bounce light are baked into lightmaps with Blender's Cycles path tracer, so every room and hallway has soft light pools and light bouncing off the walls, not just the area around you. Direct sunlight stays real-time so shadows still move with you. The game uses the lightmaps only if they were baked from exactly the current geometry (it checks a fingerprint); otherwise it falls back to real-time lighting. See [Rebaking the lighting](#rebaking-the-lighting).
 
@@ -79,7 +81,7 @@ Every room is transcribed in [`src/layout.js`](src/layout.js) as rectangles in "
 
 - The plans are photocopies with no scale bar, so dimensions are fitted, not surveyed.
 - Rooms the plans leave unlabeled are named generically (Office, Storage, Restroom), and furniture is mostly a best guess (classroom desks, lab benches, lockers along the hallways). The dining halls have round tables with curved benches, as they did in real life.
-- I couldn't find a readable photo or description of the facade, so the look is a guess: red-brown brick wings with window bands and a light stone coping. The flat roofs, one- and two-story massing and tall gym, theatre and natatorium volumes come from the plans.
+- The facade follows a [2015 photo of the front](https://commons.wikimedia.org/wiki/File:WWPHS_North_front.jpg) (by Mr. Matté, CC BY 3.0): dark red-brown brick, small paired strip windows, a dark metal parapet cap and the portico with round white columns. Sides I have no photo of are assumed to match. The flat roofs, one- and two-story massing and tall gym, theatre and natatorium volumes come from the plans.
 - The site is traced by eye from one satellite image, so positions are good to a few meters. Community Middle School is a simple stand-in block, and cars, buses and trees are placed to look like the photo rather than copied one by one.
 - The map and minimap use true north (the top of the paper plans points west).
 
@@ -100,6 +102,7 @@ src/map.js        minimap and campus map (north-up)
 src/textures.js   procedural textures and normal maps (brick, block, tile, carpet, turf…) with no image files
 src/lightmap.js   lightmap UV atlas for the walls, floors and ceilings, and the lightmap loader
 lightmaps/        baked lighting (two 2048² pages and a manifest)
+assets/           CC0 textures, the sky, and car models (credits in each folder)
 tools/bake/       scene export (Playwright) and the Blender bake + encode scripts
 tools/build-artifact.mjs  packages the page for a Claude Artifact preview
 docs/             photos of the original floor-plan handout, one per floor

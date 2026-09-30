@@ -1,0 +1,27 @@
+{
+ "rows": 3,
+ "trees": [
+  {
+   "name": "island_tree_02",
+   "row": 0,
+   "height": 3.4066057205200195,
+   "width": 4.207745552062988,
+   "span": 4.376055374145508
+  },
+  {
+   "name": "tree_small_02",
+   "row": 1,
+   "height": 4.556740760803223,
+   "width": 4.292477130889893,
+   "span": 4.739010391235352
+  },
+  {
+   "name": "fir_sapling_medium",
+   "row": 2,
+   "height": 8.826326370239258,
+   "width": 5.275873184204102,
+   "span": 9.179379425048829
+  }
+ ],
+ "source": "Poly Haven models (CC0): island_tree_02, tree_small_02, fir_sapling_medium"
+}

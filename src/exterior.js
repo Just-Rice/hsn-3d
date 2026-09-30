@@ -167,6 +167,7 @@ export function buildExterior(scene, world, info, T, M) {
   // cars
   const carColors = ['#b8322a', '#2c3e50', '#ecf0f1', '#7f8c8d', '#1f4e79', '#111111', '#9b8b6a', '#d5d8dc', '#5e3c6e', '#2f6b45', '#a7a9ac', '#243b5e'];
   const cars = [];
+  const boxCars = []; // stand-ins until the car models load (see loadCars)
   const fillLot = (r, bands, stalls, p) => {
     for (let b = 0; b < bands; b++) {
       const x0 = r[0] + b * 18;
@@ -215,6 +216,7 @@ export function buildExterior(scene, world, info, T, M) {
       im.receiveShadow = true;
       scene.add(im);
     }
+    boxCars.push(bodyM, cabM, wheelM);
   }
   // school buses: along the bus lane and parked in the south lot
   {
@@ -564,6 +566,7 @@ export function buildExterior(scene, world, info, T, M) {
 
   // ------------------------------------------------------------------ trees
   const trees = [];
+  const treeMeshes = []; // low-poly stand-ins until the tree sprites load (see loadTrees)
   const blocked = (x, z) => avoid.some((r) => inRect(r, x, z)) || lots.some((r) => inRect(r, x, z, 3)) || inRect(yard, x, z, 3) ||
     paved.some(([a, b, hw]) => segDist(x, z, a, b) < hw + 2.2);
   const tryTree = (x, z, s = 1, kind = null) => {
@@ -628,6 +631,7 @@ export function buildExterior(scene, world, info, T, M) {
       im.receiveShadow = true;
       scene.add(im);
     }
+    treeMeshes.push(trunkM, leafM, pineM);
   }
   // shrubs along the building's south face
   {
@@ -667,7 +671,114 @@ export function buildExterior(scene, world, info, T, M) {
   const areaAt = (x, z) => areas.find((a) => (a.r ? inRect(a.r, x, z) : inPoly(a.poly, x, z)))?.name || 'Campus Grounds';
 
   const [spX, spZ] = [sat(0, 899)[0] + 3, wz(782)];
-  return { flag, flagPos: [fpX, fpZ], stadium, lots: { westLot, eastLot, southLot, yard }, mapShapes, woods, areaAt, spawn: [spX, spZ] };
+  return { flag, flagPos: [fpX, fpZ], stadium, lots: { westLot, eastLot, southLot, yard }, mapShapes, woods, areaAt, spawn: [spX, spZ], cars, boxCars, trees, treeMeshes };
+}
+
+// Swaps the box stand-in cars for Kenney's Car Kit models (CC0, assets/models/cars), one
+// instanced mesh per model. The low-poly kit is chunky, so it is stretched to real proportions.
+export async function loadCars(scene, ext, base = 'assets/models/cars/') {
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+  const { mergeGeometries } = await import('three/addons/utils/BufferGeometryUtils.js');
+  const loader = new GLTFLoader();
+  const everyday = ['sedan', 'sedan-sports', 'suv', 'suv-luxury', 'hatchback-sports', 'van'];
+  const protos = {};
+  await Promise.all([...everyday, 'truck', 'delivery'].map(async (t) => {
+    const gltf = await loader.loadAsync(`${base}${t}.glb`);
+    gltf.scene.updateMatrixWorld(true);
+    const geos = [];
+    let mat = null;
+    gltf.scene.traverse((o) => {
+      if (!o.isMesh) return;
+      const g = o.geometry.clone().applyMatrix4(o.matrixWorld);
+      for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+      geos.push(g.index ? g : g.toNonIndexed());
+      mat = mat || o.material;
+    });
+    mat.roughness = 0.4;
+    mat.metalness = 0.2;
+    protos[t] = { geo: mergeGeometries(geos), mat };
+  }));
+  const R = rng(7);
+  const groups = new Map();
+  for (const c of ext.cars) {
+    const t = c.truck ? (R() < 0.5 ? 'truck' : 'delivery') : everyday[Math.floor(R() * everyday.length)];
+    if (!groups.has(t)) groups.set(t, []);
+    groups.get(t).push(c);
+  }
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+  const scale = new THREE.Vector3(1.3, 1.6, 1.8), truckScale = new THREE.Vector3(1.45, 1.8, 2.1);
+  for (const [t, list] of groups) {
+    const { geo, mat } = protos[t];
+    const im = new THREE.InstancedMesh(geo, mat, list.length);
+    list.forEach((c, i) => {
+      q.setFromAxisAngle(up, c.rot);
+      m4.compose(new THREE.Vector3(c.x, 0, c.z), q, c.truck ? truckScale : scale);
+      im.setMatrixAt(i, m4);
+    });
+    im.castShadow = im.receiveShadow = true;
+    im.computeBoundingSphere();
+    scene.add(im);
+  }
+  for (const m of ext.boxCars) m.visible = false;
+}
+
+// Swaps the low-poly trees for crossed billboards of Poly Haven tree models, pre-rendered in
+// Blender (tools/bake/tree_sprites.py, assets/trees). Two sprite views per tree, at right
+// angles; normals point up so they shade like foliage lit from above.
+export async function loadTrees(scene, ext, base = 'assets/trees/') {
+  const meta = await (await fetch(base + 'trees.json')).json();
+  const tex = await new THREE.TextureLoader().loadAsync(base + 'trees.webp');
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  const mat = new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.42, alphaToCoverage: true, side: THREE.DoubleSide, roughness: 0.95, envMapIntensity: 0.6 });
+  const rows = meta.rows;
+  const cross = (row) => {
+    const pos = [], nor = [], uv = [], idx = [];
+    for (let k = 0; k < 2; k++) {
+      const u0 = k / 2, u1 = (k + 1) / 2, v1 = 1 - row / rows, v0 = 1 - (row + 1) / rows;
+      const corners = k === 0 ? [[-0.5, 0, 0], [0.5, 0, 0], [0.5, 1, 0], [-0.5, 1, 0]] : [[0, 0, 0.5], [0, 0, -0.5], [0, 1, -0.5], [0, 1, 0.5]];
+      const b = pos.length / 3;
+      corners.forEach((c, i) => {
+        pos.push(...c);
+        nor.push(0, 1, 0);
+        uv.push(i === 0 || i === 3 ? u0 : u1, i < 2 ? v0 : v1);
+      });
+      idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    g.setIndex(idx);
+    return g;
+  };
+  const R = rng(11);
+  const groups = meta.trees.map(() => []);
+  const fir = meta.trees.findIndex((t) => /fir|pine/.test(t.name));
+  const broad = meta.trees.map((t, i) => i).filter((i) => i !== fir);
+  for (const t of ext.trees) {
+    const row = t.kind === 1 && fir >= 0 ? fir : broad[Math.floor(R() * broad.length)];
+    groups[row].push(t);
+  }
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
+  groups.forEach((list, row) => {
+    if (!list.length) return;
+    const info = meta.trees[row];
+    const im = new THREE.InstancedMesh(cross(row), mat, list.length);
+    list.forEach((t, i) => {
+      // tall enough to read as campus shade trees: about 8-16 m
+      const h = (row === fir ? 11 : 9.5) * t.s * t.h * 1.1;
+      const k = h / info.height;
+      q.setFromAxisAngle(up, R() * Math.PI);
+      m4.compose(new THREE.Vector3(t.x, 0, t.z), q, new THREE.Vector3(info.span * k, info.span * k, info.span * k));
+      im.setMatrixAt(i, m4);
+      im.setColorAt(i, col.setHSL(0.25 + (R() - 0.5) * 0.06, 0.25, 0.42 + R() * 0.12).lerp(new THREE.Color(1, 1, 1), 0.72));
+    });
+    im.castShadow = im.receiveShadow = true;
+    im.computeBoundingSphere();
+    scene.add(im);
+  });
+  for (const m of ext.treeMeshes) m.visible = false;
 }
 
 function offset(mat, f) {
