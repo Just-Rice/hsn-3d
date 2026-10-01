@@ -16,14 +16,28 @@ class Props {
   add(name, x, y, z, rot = 0, color = null, scale = null) {
     this.types.get(name).items.push({ x, y, z, rot, color, scale });
   }
+  // One InstancedMesh per prototype per 24 m cell and floor, so the frustum and the distance
+  // cull in main.js (props.js) skip the furniture in rooms you can't see.
   finalize(scene) {
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(1, 1, 1), p = new THREE.Vector3();
     const up = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
+    const CELL = 24;
+    const chunks = [];
     for (const [name, t] of this.types) {
       if (!t.items.length) continue;
-      const mesh = new THREE.InstancedMesh(t.geometry, t.material, t.items.length);
+      const cells = new Map();
+      for (const it of t.items) {
+        const key = `${Math.floor(it.x / CELL)},${Math.floor(it.z / CELL)},${Math.round(it.y / 3)}`;
+        if (!cells.has(key)) cells.set(key, []);
+        cells.get(key).push(it);
+      }
+      for (const items of cells.values()) chunks.push({ name, t, items });
+    }
+    this.meshes = [];
+    for (const { name, t, items } of chunks) {
+      const mesh = new THREE.InstancedMesh(t.geometry, t.material, items.length);
       mesh.name = name;
-      t.items.forEach((it, i) => {
+      items.forEach((it, i) => {
         q.setFromAxisAngle(up, it.rot);
         p.set(it.x, it.y, it.z);
         if (it.scale) s.set(...it.scale);
@@ -33,10 +47,13 @@ class Props {
         if (it.color) mesh.setColorAt(i, col.set(it.color));
         else if (mesh.instanceColor || t.items.some((o) => o.color)) mesh.setColorAt(i, col.set('#ffffff'));
       });
-      mesh.castShadow = true;
+      // indoor furniture doesn't need sun shadows: the baked lighting and the props' own
+      // ambient occlusion already ground it, and the shadow map stays cheap
+      mesh.castShadow = false;
       mesh.receiveShadow = true;
       mesh.computeBoundingSphere();
       scene.add(mesh);
+      this.meshes.push(mesh);
     }
   }
 }
@@ -821,4 +838,5 @@ export function buildFurniture(scene, world, info, T, M) {
   const materials = { paint: M.paint, wood: M.wood, books: std({ map: booksTexture(), roughness: 0.75 }) };
   for (const m of B.toMeshes(materials)) scene.add(m);
   props.finalize(scene);
+  return { props: props.meshes };
 }

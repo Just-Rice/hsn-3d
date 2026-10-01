@@ -17,6 +17,7 @@ import { buildExterior, loadCars, loadTrees, sat } from './exterior.js';
 import { Character, Player, FollowCamera, DEFAULT_LOOK } from './player.js';
 import { Avatar } from './avatar.js';
 import { FloorReflections } from './reflect.js';
+import { loadProps, upgradeProps, cullProps, propFill } from './props.js';
 import { NavGrid } from './nav.js';
 import { Balls } from './balls.js';
 import { loadLightmaps } from './lightmap.js';
@@ -295,7 +296,7 @@ const progress = (pct, msg) => {
 };
 
 // ------------------------------------------------------------------ build the world
-let info, ext, nav, maps, world, player, character, cam, balls;
+let info, ext, nav, maps, world, player, character, cam, balls, furn;
 let baked = null; // lightmap manifest once the baked lighting has loaded
 let texturesReady = Promise.resolve(0);
 let running = false;
@@ -312,7 +313,7 @@ async function build() {
   await progress(20, 'Raising walls from the floor plans…');
   info = buildBuilding(scene, world, T, M);
   await progress(45, 'Setting out desks, lockers and seats…');
-  buildFurniture(scene, world, info, T, M);
+  furn = buildFurniture(scene, world, info, T, M);
   await progress(62, 'Paving the lots and lining the fields…');
   ext = buildExterior(scene, world, info, T, M);
   loadCars(scene, ext).catch((e) => console.warn('car models unavailable', e));
@@ -366,6 +367,10 @@ async function build() {
     balls.add('soccer', ext.spawn[0] - 0.3, 0.05, ext.spawn[1] - 2.5); // on the walk, between the canopy's columns
   }
   initPathViz();
+  // detailed furniture from Blender replaces the simple shapes once it has loaded
+  loadProps('assets/models/props.glb')
+    .then((p) => upgradeProps(scene, p))
+    .catch((e) => console.warn('props not loaded, keeping the simple furniture:', e));
   // floors that reflect (see reflect.js), with how glossy each finish is
   const GLOSS = { floorTile: [1, 0.2], wood: [1, 0.22], stage: [0.5, 0.4], ceramic: [0.7, 0.15], concrete: [0.2, 0.6] };
   for (const [key, mat] of Object.entries(info.materials)) {
@@ -1159,6 +1164,8 @@ function frame() {
   indoorK += ((inside ? 1 : 0) - indoorK) * Math.min(1, dt * 3);
   updateSun(p, inside);
   updateBulbs(dt, p, indoorK);
+  // indirect light for the furniture, which isn't in the lightmaps (see props.js)
+  propFill.value.setRGB(1.0, 0.98, 0.94).multiplyScalar(indoorK * (baked ? 1.6 : 0.6));
 
   info.updateDoors(p.x, p.z, dt);
   const wm = info.water.material.map;
@@ -1188,6 +1195,7 @@ function frame() {
   if (hudTimer <= 0) {
     hudTimer = 0.2;
     locate();
+    cullProps(furn.props, camera.position, indoorK > 0.5);
   }
   const mc = $('#mini');
   drawMinimap(miniCtx, mc.width, maps, p.x, p.z, cam.yaw, player.yaw, navPath, player.level, navDest && navDest.lv === player.level ? navDest : null);
