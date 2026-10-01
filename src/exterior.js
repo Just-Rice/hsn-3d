@@ -172,7 +172,8 @@ export function buildExterior(scene, world, info, T, M) {
   // cars
   const carColors = ['#b8322a', '#2c3e50', '#ecf0f1', '#7f8c8d', '#1f4e79', '#111111', '#9b8b6a', '#d5d8dc', '#5e3c6e', '#2f6b45', '#a7a9ac', '#243b5e'];
   const cars = [];
-  const boxCars = []; // stand-ins until the car models load (see loadCars)
+  const boxCars = []; // stand-ins until the vehicle models load (see loadCars)
+  let ext_buses = [];
   const fillLot = (r, bands, stalls, p) => {
     for (let b = 0; b < bands; b++) {
       const x0 = r[0] + b * 18;
@@ -253,6 +254,8 @@ export function buildExterior(scene, world, info, T, M) {
     im.castShadow = true;
     im.receiveShadow = true;
     scene.add(im);
+    boxCars.push(im);
+    ext_buses = buses;
   }
   // parking-lot light poles
   for (const r of [westLot, eastLot])
@@ -711,49 +714,63 @@ export function buildExterior(scene, world, info, T, M) {
   const areaAt = (x, z) => areas.find((a) => (a.r ? inRect(a.r, x, z) : inPoly(a.poly, x, z)))?.name || 'Campus Grounds';
 
   const [spX, spZ] = [sat(0, LANE_Y)[0] + LANE_W / 2 + 1.0, wz(782)];
-  return { flag, flagPos: [fpX, fpZ], stadium, lots: { westLot, eastLot, southLot, yard }, mapShapes, woods, areaAt, spawn: [spX, spZ], cars, boxCars, trees, treeMeshes };
+  return { flag, flagPos: [fpX, fpZ], stadium, lots: { westLot, eastLot, southLot, yard }, mapShapes, woods, areaAt, spawn: [spX, spZ], cars, buses: ext_buses, carColors, boxCars, trees, treeMeshes };
 }
 
 // Swaps the box stand-in cars for Kenney's Car Kit models (CC0, assets/models/cars), one
 // instanced mesh per model. The low-poly kit is chunky, so it is stretched to real proportions.
-export async function loadCars(scene, ext, base = 'assets/models/cars/') {
+export async function loadCars(scene, ext, url = 'assets/models/vehicles.glb') {
+  // Vehicles modeled in Blender (tools/vehicles/build_vehicles.py): each one is a node in
+  // the file with a material per part; the paint ("carpaint") takes the instance color,
+  // everything else ("*_fixed": glass, tires, lights, trim) keeps its own.
   const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
   const { mergeGeometries } = await import('three/addons/utils/BufferGeometryUtils.js');
-  const loader = new GLTFLoader();
-  const everyday = ['sedan', 'sedan-sports', 'suv', 'suv-luxury', 'hatchback-sports', 'van'];
+  const gltf = await new GLTFLoader().loadAsync(url);
   const protos = {};
-  await Promise.all([...everyday, 'truck', 'delivery'].map(async (t) => {
-    const gltf = await loader.loadAsync(`${base}${t}.glb`);
-    gltf.scene.updateMatrixWorld(true);
-    const geos = [];
-    let mat = null;
-    gltf.scene.traverse((o) => {
+  for (const node of gltf.scene.children) {
+    node.updateMatrixWorld(true);
+    const geos = [], mats = [];
+    node.traverse((o) => {
       if (!o.isMesh) return;
       const g = o.geometry.clone().applyMatrix4(o.matrixWorld);
       for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
-      geos.push(g.index ? g : g.toNonIndexed());
-      mat = mat || o.material;
+      geos.push(g);
+      const m = o.material;
+      if (m.name.endsWith('_fixed')) m.onBeforeCompile = (sh) => { sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', ''); };
+      m.customProgramCacheKey = () => (m.name.endsWith('_fixed') ? 'veh-fixed' : 'veh');
+      mats.push(m);
     });
-    mat.roughness = 0.4;
-    mat.metalness = 0.2;
-    protos[t] = { geo: mergeGeometries(geos), mat };
-  }));
-  const R = rng(7);
-  const groups = new Map();
-  for (const c of ext.cars) {
-    const t = c.truck ? (R() < 0.5 ? 'truck' : 'delivery') : everyday[Math.floor(R() * everyday.length)];
-    if (!groups.has(t)) groups.set(t, []);
-    groups.get(t).push(c);
+    if (geos.length) protos[node.name] = { geo: mergeGeometries(geos, true), mats };
   }
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-  const scale = new THREE.Vector3(1.3, 1.6, 1.8), truckScale = new THREE.Vector3(1.45, 1.8, 2.1);
-  for (const [t, list] of groups) {
-    const { geo, mat } = protos[t];
-    const im = new THREE.InstancedMesh(geo, mat, list.length);
+  const R = rng(7);
+  const everyday = ['sedan', 'sedan', 'hatchback', 'suv', 'suv', 'minivan', 'pickup'];
+  const groups = new Map();
+  const put = (t, item) => {
+    if (!groups.has(t)) groups.set(t, []);
+    groups.get(t).push(item);
+  };
+  for (const c of ext.cars) put(c.truck ? 'boxtruck' : everyday[Math.floor(R() * everyday.length)], { ...c, color: c.truck ? '#ffffff' : ext.carColors[Math.floor(R() * ext.carColors.length)], rot: c.rot + (R() < 0.5 ? Math.PI : 0) });
+  // the stand-in buses face -Z; the model faces +Z
+  for (const b of ext.buses) put('schoolbus', { ...b, rot: b.rot + Math.PI, color: '#ffffff' });
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), one = new THREE.Vector3(1, 1, 1), col = new THREE.Color();
+  // one InstancedMesh per type per 40 m cell, so lots out of view (and out of the sun's
+  // shadow frustum) are skipped
+  const cells = new Map();
+  for (const [t, list] of groups)
+    for (const c of list) {
+      const key = `${t}|${Math.floor(c.x / 40)},${Math.floor(c.z / 40)}`;
+      if (!cells.has(key)) cells.set(key, []);
+      cells.get(key).push(c);
+    }
+  for (const [key, list] of cells) {
+    const p = protos[key.split('|')[0]];
+    if (!p) continue;
+    const im = new THREE.InstancedMesh(p.geo, p.mats, list.length);
     list.forEach((c, i) => {
       q.setFromAxisAngle(up, c.rot);
-      m4.compose(new THREE.Vector3(c.x, 0, c.z), q, c.truck ? truckScale : scale);
+      m4.compose(new THREE.Vector3(c.x, 0, c.z), q, one);
       im.setMatrixAt(i, m4);
+      im.setColorAt(i, col.set(c.color));
     });
     im.castShadow = im.receiveShadow = true;
     im.computeBoundingSphere();
