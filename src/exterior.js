@@ -717,12 +717,11 @@ export function buildExterior(scene, world, info, T, M) {
   return { flag, flagPos: [fpX, fpZ], stadium, lots: { westLot, eastLot, southLot, yard }, mapShapes, woods, areaAt, spawn: [spX, spZ], cars, buses: ext_buses, carColors, boxCars, trees, treeMeshes };
 }
 
-// Swaps the box stand-in cars for Kenney's Car Kit models (CC0, assets/models/cars), one
-// instanced mesh per model. The low-poly kit is chunky, so it is stretched to real proportions.
+// Swaps the box stand-in cars and buses for vehicles modeled in Blender
+// (tools/vehicles/build_vehicles.py -> assets/models/vehicles.glb). Each is a node in the file
+// with a material per part; the paint ("carpaint") takes the instance color, everything else
+// ("*_fixed": glass, tires, lights, trim) keeps its own.
 export async function loadCars(scene, ext, url = 'assets/models/vehicles.glb') {
-  // Vehicles modeled in Blender (tools/vehicles/build_vehicles.py): each one is a node in
-  // the file with a material per part; the paint ("carpaint") takes the instance color,
-  // everything else ("*_fixed": glass, tires, lights, trim) keeps its own.
   const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
   const { mergeGeometries } = await import('three/addons/utils/BufferGeometryUtils.js');
   const gltf = await new GLTFLoader().loadAsync(url);
