@@ -1,19 +1,19 @@
 {
  "walk": {
-  "speed": 1.275,
+  "speed": 1.325,
   "duration": 1.0666666666666667,
   "lfoot": 0.969
  },
  "idle": {
-  "duration": 4.0
+  "duration": 4.9
  },
  "run": {
-  "speed": 2.923,
+  "speed": 3.029,
   "duration": 0.7666666666666667,
-  "lfoot": 0.652
+  "lfoot": 0.696
  },
  "sprint": {
-  "speed": 3.918,
+  "speed": 4.07,
   "duration": 0.6666666666666666,
   "lfoot": 0.1
  },
@@ -24,13 +24,13 @@
   "land": 1.2333333333333334
  },
  "swim": {
-  "speed": 0.214,
+  "speed": 0.222,
   "duration": 0.8,
-  "hips": 0.795
+  "hips": 0.826
  },
  "clothing": {
-  "shirt": 0.3093,
-  "pants": 0.2141,
-  "shoes": 0.4385
+  "shirt": 0.5435,
+  "pants": 0.5581,
+  "shoes": 0.3783
  }
 }

@@ -341,14 +341,7 @@ async function build() {
   world.waters = [{ r: info.poolPit, y: -0.22 }];
   player = new Player(world, character);
   // the realistic avatar replaces the simple figure once it has loaded
-  Avatar.load('assets/models/people/student-m1.glb')
-    .then((av) => {
-      scene.remove(character.group);
-      character = av;
-      player.char = av;
-      scene.add(av.group);
-    })
-    .catch((e) => console.warn('avatar not loaded, keeping the simple figure:', e));
+  loadAvatar(look.avatar);
   cam = new FollowCamera(camera, world);
   // balls to kick around
   balls = new Balls(scene, world);
@@ -368,7 +361,7 @@ async function build() {
   }
   initPathViz();
   // detailed furniture from Blender replaces the simple shapes once it has loaded
-  loadProps('assets/models/props.glb')
+  propsReady
     .then((p) => upgradeProps(scene, p))
     .catch((e) => console.warn('props not loaded, keeping the simple furniture:', e));
   // floors that reflect (see reflect.js), with how glossy each finish is
@@ -385,6 +378,35 @@ async function build() {
     applyQuality();
   });
   await progress(100, 'Ready.');
+}
+
+// ------------------------------------------------------------------ the player's avatar
+// Rocketbox students with motion capture (avatar.js); the backpack comes from props.glb
+const propsReady = loadProps('assets/models/props.glb');
+const AVATARS = [
+  ['m1', 'Blue hoodie'],
+  ['f1', 'Green tee'],
+  ['m2', 'Red track jacket'],
+  ['f2', 'Black hoodie'],
+];
+let avatarId = null;
+function loadAvatar(id) {
+  if (!AVATARS.some((a) => a[0] === id)) id = AVATARS[0][0];
+  avatarId = id;
+  return Avatar.load(`assets/models/people/student-${id}.glb`)
+    .then(async (av) => {
+      if (avatarId !== id) return; // picked another one while this loaded
+      av.wear((await propsReady.catch(() => new Map())).get('backpack'));
+      av.setLook(currentLook());
+      const old = character;
+      av.group.position.copy(old.group.position);
+      av.group.rotation.copy(old.group.rotation);
+      scene.remove(old.group);
+      character = av;
+      player.char = av;
+      scene.add(av.group);
+    })
+    .catch((e) => console.warn('avatar not loaded, keeping the current figure:', e));
 }
 
 // ------------------------------------------------------------------ places
@@ -925,13 +947,12 @@ function renderTp() {
 }
 
 // --- character
+// '' = the student's own clothes
 const PARTS = [
-  ['shirt', 'Shirt', ['#1f45a8', '#c0c7d1', '#ffffff', '#14264f', '#b8322a', '#222222', '#2f7a47']],
-  ['pants', 'Pants', ['#2f3e5c', '#222222', '#6b6b6b', '#c8b48a', '#14264f', '#5a3a28']],
-  ['skin', 'Skin', ['#f3d2b5', '#e0ac86', '#c68a5e', '#9a6440', '#6e4428', '#4a2c1a']],
-  ['hair', 'Hair', ['#1a1410', '#3b2616', '#7a4a24', '#c7924a', '#e3c77a', '#9b2d1f', '#7c7c7c']],
-  ['shoes', 'Shoes', ['#f2f2f2', '#222222', '#b8322a', '#1f45a8', '#c0c7d1']],
-  ['pack', 'Backpack', ['#aeb6c1', '#1f45a8', '#222222', '#b8322a', '#14264f', '#e86fa0']],
+  ['shirt', 'Top', ['', '#1f45a8', '#c0c7d1', '#ffffff', '#14264f', '#b8322a', '#222222', '#2f7a47']],
+  ['pants', 'Pants', ['', '#2f3e5c', '#222222', '#6b6b6b', '#c8b48a', '#14264f', '#5a3a28']],
+  ['shoes', 'Shoes', ['', '#f2f2f2', '#222222', '#b8322a', '#1f45a8', '#c0c7d1']],
+  ['pack', 'Backpack', ['#2a55b8', '#aeb6c1', '#222222', '#b8322a', '#14264f', '#e86fa0']],
 ];
 function currentLook() {
   return { ...DEFAULT_LOOK, ...store.get('look', {}) };
@@ -940,6 +961,25 @@ function renderChar() {
   const box = $('#charsw');
   box.innerHTML = '';
   const look = currentLook();
+  {
+    const l = document.createElement('div');
+    l.className = 'muted';
+    l.textContent = 'Student';
+    const row = document.createElement('div');
+    row.className = 'sw names';
+    for (const [id, name] of AVATARS) {
+      const b = document.createElement('button');
+      b.className = 'name';
+      b.textContent = name;
+      if (look.avatar === id) b.classList.add('on');
+      b.addEventListener('click', () => {
+        setPart('avatar', id);
+        loadAvatar(id);
+      });
+      row.appendChild(b);
+    }
+    box.append(l, row);
+  }
   for (const [k, label, opts] of PARTS) {
     const l = document.createElement('div');
     l.className = 'muted';
@@ -948,17 +988,18 @@ function renderChar() {
     sw.className = 'sw';
     for (const col of opts) {
       const b = document.createElement('button');
-      b.style.background = col;
-      b.title = col;
-      b.setAttribute('aria-label', `${label} ${col}`);
-      if (look[k].toLowerCase() === col) b.classList.add('on');
+      if (col) b.style.background = col;
+      else b.classList.add('orig'); // the student's own
+      b.title = col || 'Original';
+      b.setAttribute('aria-label', `${label} ${col || 'original'}`);
+      if ((look[k] || '').toLowerCase() === col) b.classList.add('on');
       b.addEventListener('click', () => setPart(k, col));
       sw.appendChild(b);
     }
     const inp = document.createElement('input');
     inp.type = 'color';
     inp.id = 'col-' + k;
-    inp.value = look[k];
+    inp.value = look[k] || '#808080';
     inp.setAttribute('aria-label', `Custom ${label} color`);
     inp.addEventListener('input', () => setPart(k, inp.value, false));
     sw.appendChild(inp);
@@ -974,8 +1015,9 @@ function setPart(k, col, rerender = true) {
   if (rerender) renderChar();
 }
 $('#charreset').addEventListener('click', () => {
-  store.set('look', DEFAULT_LOOK);
-  character.setLook(DEFAULT_LOOK);
+  const look = { ...DEFAULT_LOOK, avatar: currentLook().avatar };
+  store.set('look', look);
+  character.setLook(look);
   renderChar();
 });
 $$('#optq button').forEach((b) =>
@@ -1301,6 +1343,9 @@ window.__game = {
   get nav() { return nav; },
   teleport: (...a) => teleport(...a),
   spots: () => SPOTS(),
+  loadAvatar: (id) => loadAvatar(id),
+  setLook: (look) => { store.set('look', { ...currentLook(), ...look }); character.setLook(currentLook()); },
+  get character() { return character; },
   plan: (px, py) => [wx(px), wz(py)],
   view: (p, yaw, pitch = -0.05, dist = null, fp = false) => { teleport(p, yaw); cam.yaw = yaw; cam.pitch = pitch; cam.firstPerson = fp; if (dist) cam.dist = cam.curDist = dist; },
   setDestination: (label, lv) => setDestination(info.rooms.find((r) => r.label === label && (lv === undefined || r.level === lv))),

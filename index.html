@@ -105,6 +105,8 @@
   .sw { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
   .sw button { width: 28px; height: 28px; border-radius: 8px; border: 2px solid transparent; cursor: pointer; }
   .sw button.on { border-color: var(--accent); }
+  .sw button.orig { background: conic-gradient(#1f45a8 0 25%, #d5dde8 0 50%, #1f45a8 0 75%, #d5dde8 0); }
+  .sw.names button.name { width: auto; height: auto; padding: 5px 10px; background: var(--keycap); color: var(--ink); font: 600 13px var(--ui); }
   .sw input[type="color"] { width: 34px; height: 28px; border: 0; background: none; padding: 0; cursor: pointer; }
   label.check { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 14px; }
 
@@ -208,7 +210,7 @@
   <div class="sheet panel" style="width:min(520px,100%)">
     <div class="row"><h2>Your character</h2><div class="spacer"></div><button class="btn" data-close>Done</button></div>
     <div class="swatches" id="charsw"></div>
-    <div class="row"><button class="btn" id="charreset">Reset to blue and silver</button></div>
+    <div class="row"><button class="btn" id="charreset">Original clothes</button></div>
     <div class="row"><span class="muted">Graphics</span><div class="spacer"></div><div class="seg" id="optq" role="group" aria-label="Graphics quality"><button data-q="low">Low</button><button data-q="medium">Medium</button><button data-q="high">High</button></div></div>
   </div>
 </div>

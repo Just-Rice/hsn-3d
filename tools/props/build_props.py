@@ -601,6 +601,23 @@ def troffer():
     return finish('troffer')
 
 
+def backpack():
+    # school backpack worn by the player: origin at the middle of the back panel, the bag
+    # hanging behind (Blender -Y, away from the wearer, who faces +Y)
+    M['strap'] = M.get('strap') or material('strap', 'Fabric030', color=(0.05, 0.05, 0.055), tile=0.2, fixed=True)
+    box(-0.15, -0.16, -0.22, 0.15, 0.0, 0.2, M['fabric'], bevel=0.05, segs=3)  # main compartment
+    box(-0.12, -0.215, -0.2, 0.12, -0.12, -0.02, M['fabric'], bevel=0.035, segs=3)  # front pocket
+    box(-0.145, -0.155, 0.17, 0.145, -0.148, 0.178, M['blackPlastic'])  # main zipper (top arc, simplified)
+    box(-0.11, -0.218, -0.03, 0.11, -0.21, -0.022, M['blackPlastic'])  # pocket zipper
+    for sx in (-1, 1):
+        box(sx * 0.03 - 0.008, -0.225, -0.05, sx * 0.03 + 0.008, -0.214, -0.02, M['chrome'])  # zipper pulls
+        # straps: from the top of the bag over the shoulder, and their ends at the bottom
+        straight_tube((sx * 0.08, 0.0, 0.18), (sx * 0.09, 0.08, 0.27), 0.022, M['strap'])
+        box(sx * 0.1 - 0.03, 0.0, -0.22, sx * 0.1 + 0.03, 0.03, -0.1, M['strap'], bevel=0.008)
+    tube([(-0.04, -0.06, 0.2), (0.0, -0.06, 0.25), (0.04, -0.06, 0.2)], 0.009, M['strap'])  # grab handle
+    return finish('backpack')
+
+
 # ------------------------------------------------------------------ AO bake
 def bake_ao(ob):
     me = ob.data
@@ -663,7 +680,7 @@ except Exception as e:  # noqa: BLE001
     scene.cycles.device = 'CPU'
 
 built = []
-for fn in (locker, desk, chair, stool, seat, round_table, clock, lambda: door(M['veneer'], 'doorWood'), lambda: door(M['paint'], 'doorSteel'), troffer):
+for fn in (locker, desk, chair, stool, seat, round_table, clock, lambda: door(M['veneer'], 'doorWood'), lambda: door(M['paint'], 'doorSteel'), troffer, backpack):
     ob = fn()
     built.append(ob)
 x = 0

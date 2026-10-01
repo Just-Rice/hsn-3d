@@ -419,15 +419,98 @@ for mat in body.data.materials:
     if alpha:
         nt.links.new(c.outputs['Alpha'], bsdf.inputs['Alpha'])
         mat.blend_method = 'CLIP'
-    n = img(paths['normal'], False)
-    nm = nt.nodes.new('ShaderNodeNormalMap')
-    nt.links.new(n.outputs['Color'], nm.inputs['Color'])
-    nt.links.new(nm.outputs['Normal'], bsdf.inputs['Normal'])
-    r = img(paths['orm'], False)
-    sep = nt.nodes.new('ShaderNodeSeparateColor')
-    nt.links.new(r.outputs['Color'], sep.inputs[0])
-    nt.links.new(sep.outputs['Green'], bsdf.inputs['Roughness'])
+    if os.path.exists(paths['normal']):
+        n = img(paths['normal'], False)
+        nm = nt.nodes.new('ShaderNodeNormalMap')
+        nt.links.new(n.outputs['Color'], nm.inputs['Color'])
+        nt.links.new(nm.outputs['Normal'], bsdf.inputs['Normal'])
+    if os.path.exists(paths['orm']):
+        r = img(paths['orm'], False)
+        sep = nt.nodes.new('ShaderNodeSeparateColor')
+        nt.links.new(r.outputs['Color'], sep.inputs[0])
+        nt.links.new(sep.outputs['Green'], bsdf.inputs['Roughness'])
+    else:
+        bsdf.inputs['Roughness'].default_value = 0.6  # hair
     bsdf.inputs['Metallic'].default_value = 0.0
+
+# ------------------------------------------------------------------ clothing mask
+# For the Character panel's colors: which texels of the body texture are shirt (R), pants
+# (G) or shoes (B). Each body face is assigned by the bone that moves it most; inside the
+# shirt and pants regions, texels the color of the hands' skin are left out (bare forearms,
+# legs under shorts). The game recolors masked texels to the chosen color, scaled by their
+# brightness relative to the region's mean (kept in the .json), so folds and seams stay.
+def clothing_mask(size=512):
+    me = body.data
+    bi = next(i for i, m in enumerate(me.materials) if m.name.endswith('_body'))
+    groups = {g.index: g.name for g in body.vertex_groups}
+
+    def region(bone):
+        if any(k in bone for k in ('Foot', 'Toe')):
+            return 2
+        if any(k in bone for k in ('Thigh', 'Calf', 'Pelvis')):
+            return 1
+        if any(k in bone for k in ('Hand', 'Finger')):
+            return 3  # skin
+        return 0  # spine, neck, clavicles, arms
+    col_img = next(n.image for n in me.materials[bi].node_tree.nodes if n.type == 'TEX_IMAGE' and n.image.name.endswith('_color.jpg'))
+    W, H = col_img.size
+    tex = np.empty(W * H * 4, np.float32)
+    col_img.pixels.foreach_get(tex)
+    tex = tex.reshape(H, W, 4)[:, :, :3]
+    uv = me.uv_layers.active.data
+    label = np.full((size, size), -1, np.int8)
+    for p in me.polygons:
+        if p.material_index != bi:
+            continue
+        w = {}
+        for vi in p.vertices:
+            for g in me.vertices[vi].groups:
+                w[groups[g.group]] = w.get(groups[g.group], 0) + g.weight
+        reg = region(max(w, key=w.get)) if w else 0
+        pts = [uv[li].uv for li in p.loop_indices]
+        for k in range(1, len(pts) - 1):  # fan into triangles, fill by barycentrics
+            tri = np.array([pts[0], pts[k], pts[k + 1]]) * size
+            x0, y0 = np.floor(tri.min(0)).astype(int)
+            x1, y1 = np.ceil(tri.max(0)).astype(int)
+            x0, y0, x1, y1 = max(x0, 0), max(y0, 0), min(x1, size - 1), min(y1, size - 1)
+            if x1 < x0 or y1 < y0:
+                continue
+            yy, xx = np.mgrid[y0:y1 + 1, x0:x1 + 1] + 0.5
+            (ax, ay), (bx, by), (cx, cy) = tri
+            d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+            if abs(d) < 1e-9:
+                continue
+            l1 = ((by - cy) * (xx - cx) + (cx - bx) * (yy - cy)) / d
+            l2 = ((cy - ay) * (xx - cx) + (ax - cx) * (yy - cy)) / d
+            inside = (l1 >= -0.02) & (l2 >= -0.02) & (1 - l1 - l2 >= -0.02)
+            sub = label[y0:y1 + 1, x0:x1 + 1]
+            sub[inside] = reg
+    # texture colors at mask resolution (Blender images are stored bottom row first, as UVs)
+    ys = (np.arange(size) + 0.5) / size * H
+    xs = (np.arange(size) + 0.5) / size * W
+    small = tex[ys.astype(int)][:, xs.astype(int)]
+    skin = np.median(small[label == 3], axis=0) if np.any(label == 3) else np.array([0.6, 0.45, 0.35])
+    dist = np.linalg.norm(small - skin, axis=-1) / (np.linalg.norm(skin) + 1e-3)
+    bare = dist < 0.18
+    lum = small @ np.array([0.2126, 0.7152, 0.0722])
+    mask = np.zeros((size, size, 4), np.float32)
+    mask[..., 3] = 1
+    stats = {}
+    for ch, reg in ((0, 0), (1, 1), (2, 2)):
+        m = (label == reg) & ~(bare & (reg != 2))
+        mask[..., ch] = m
+        stats[('shirt', 'pants', 'shoes')[ch]] = round(float(np.mean(lum[m])) if m.any() else 0.5, 4)
+    img = bpy.data.images.new('clothing_mask', size, size, alpha=False)
+    img.pixels.foreach_set(mask.ravel())
+    pth = os.path.splitext(OUT)[0] + '_mask.png'
+    img.filepath_raw = pth
+    img.file_format = 'PNG'
+    img.save()
+    return stats
+
+
+meta['clothing'] = clothing_mask()
+log('clothing mask', meta['clothing'])
 
 # ------------------------------------------------------------------ export
 arm.animation_data.action = None
@@ -437,7 +520,7 @@ bpy.ops.object.select_all(action='SELECT')
 bpy.ops.export_scene.gltf(filepath=OUT, export_format='GLB', use_selection=True, export_animations=True,
                           export_animation_mode='ACTIONS', export_anim_single_armature=True, export_force_sampling=True,
                           export_frame_step=1, export_optimize_animation_size=True, export_def_bones=False,
-                          export_image_format='AUTO', export_jpeg_quality=88, export_yup=True, export_apply=False)
+                          export_image_format='WEBP', export_image_quality=85, export_yup=True, export_apply=False)
 import json
 json.dump(meta, open(os.path.splitext(OUT)[0] + '.json', 'w'), indent=1)
 if os.environ.get('KEEP_BLEND'):  # for inspecting the result in Blender

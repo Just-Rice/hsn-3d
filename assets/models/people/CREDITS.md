@@ -3,7 +3,7 @@
 `student-*.glb` are built by [`tools/character`](../../../tools/character) in Blender.
 
 **Avatars.** From the [Microsoft Rocketbox Avatar Library](https://github.com/microsoft/Microsoft-Rocketbox)
-(`Male_Adult_17`, …), MIT License:
+(`Male_Adult_17` → student-m1, `Female_Adult_17` → f1, `Male_Adult_10` → m2, `Female_Adult_12` → f2), MIT License:
 
 > Copyright (c) Microsoft Corporation.
 >

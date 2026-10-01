@@ -1,13 +1,23 @@
 // Player character (customizable), movement physics and follow camera.
 import * as THREE from 'three';
 
+// avatar: which student (assets/models/people/student-<id>.glb); an empty color keeps that
+// student's own clothes
 export const DEFAULT_LOOK = {
+  avatar: 'm1',
+  shirt: '',
+  pants: '',
+  shoes: '',
+  pack: '#2a55b8',
+};
+// colors of the simple figure shown until the avatar loads
+const FIGURE = {
   skin: '#e0ac86',
   hair: '#3b2616',
   shirt: '#1f45a8',
   pants: '#2f3e5c',
   shoes: '#f2f2f2',
-  pack: '#aeb6c1',
+  pack: '#2a55b8',
 };
 
 export class Character {
@@ -15,7 +25,7 @@ export class Character {
     this.group = new THREE.Group();
     this.mats = {};
     const rough = { skin: 0.6, hair: 0.75, shirt: 0.85, pants: 0.9, shoes: 0.5, pack: 0.7 };
-    for (const k of Object.keys(DEFAULT_LOOK)) this.mats[k] = new THREE.MeshStandardMaterial({ color: look[k] || DEFAULT_LOOK[k], roughness: rough[k] });
+    for (const k of Object.keys(FIGURE)) this.mats[k] = new THREE.MeshStandardMaterial({ color: look[k] || FIGURE[k], roughness: rough[k] });
     const m = this.mats;
     const cap = (r, l, mat) => {
       const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(r, l, 4, 10), mat);
@@ -106,7 +116,7 @@ export class Character {
   }
 
   setLook(look) {
-    for (const k of Object.keys(this.mats)) if (look[k]) this.mats[k].color.set(look[k]);
+    for (const k of Object.keys(this.mats)) this.mats[k].color.set(look[k] || FIGURE[k]);
   }
 
   animate(dt, speed, grounded, sprint, swimming = false) {

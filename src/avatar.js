@@ -24,11 +24,15 @@ const GAIT = [
 
 export class Avatar {
   static async load(url) {
-    const [gltf, meta] = await Promise.all([new GLTFLoader().loadAsync(url), fetch(url.replace(/\.glb$/, '.json')).then((r) => r.json())]);
-    return new Avatar(gltf, meta);
+    const [gltf, meta, mask] = await Promise.all([
+      new GLTFLoader().loadAsync(url),
+      fetch(url.replace(/\.glb$/, '.json')).then((r) => r.json()),
+      new THREE.TextureLoader().loadAsync(url.replace(/\.glb$/, '_mask.png')).catch(() => null),
+    ]);
+    return new Avatar(gltf, meta, mask);
   }
 
-  constructor(gltf, meta) {
+  constructor(gltf, meta, mask = null) {
     this.meta = meta;
     this.group = new THREE.Group();
     const model = gltf.scene;
@@ -49,6 +53,7 @@ export class Avatar {
       for (const m of mats) {
         m.envMapIntensity = 0.8;
         this.materials.push(m);
+        if (mask && m.name.endsWith('_body')) this.clothing(m, mask, meta.clothing);
       }
     });
     this.mixer = new THREE.AnimationMixer(model);
@@ -70,7 +75,72 @@ export class Avatar {
     this.wasGrounded = true;
   }
 
-  setLook() {}
+  // Shirt, pants and shoes take the Character panel's colors through a mask of the body
+  // texture (tools/character/retarget.py): masked texels become the chosen color, scaled by
+  // their brightness relative to the region's mean, so folds, seams and wear stay. An empty
+  // color keeps the original clothes.
+  clothing(mat, mask, stats) {
+    mask.flipY = false; // same UV convention as the glTF's own textures
+    const lin = (v) => Math.pow(v, 2.2);
+    this.tint = {
+      clothMask: { value: mask },
+      clothLum: { value: new THREE.Vector3(lin(stats.shirt), lin(stats.pants), lin(stats.shoes)) },
+      tintShirt: { value: new THREE.Vector4() },
+      tintPants: { value: new THREE.Vector4() },
+      tintShoes: { value: new THREE.Vector4() },
+    };
+    const U = this.tint;
+    mat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, U);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform sampler2D clothMask; uniform vec3 clothLum; uniform vec4 tintShirt, tintPants, tintShoes;')
+        .replace('#include <map_fragment>', `#include <map_fragment>
+          {
+            vec3 cm = texture2D(clothMask, vMapUv).rgb;
+            float L = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+            if (tintShirt.a > 0.5) diffuseColor.rgb = mix(diffuseColor.rgb, tintShirt.rgb * clamp(L / clothLum.x, 0.15, 1.8), cm.r);
+            if (tintPants.a > 0.5) diffuseColor.rgb = mix(diffuseColor.rgb, tintPants.rgb * clamp(L / clothLum.y, 0.15, 1.8), cm.g);
+            if (tintShoes.a > 0.5) diffuseColor.rgb = mix(diffuseColor.rgb, tintShoes.rgb * clamp(L / clothLum.z, 0.15, 1.8), cm.b);
+          }`);
+    };
+    mat.customProgramCacheKey = () => 'avatar-clothing';
+    mat.needsUpdate = true;
+  }
+
+  setLook(look) {
+    const c = new THREE.Color();
+    if (this.tint) {
+      for (const [k, u] of [['shirt', 'tintShirt'], ['pants', 'tintPants'], ['shoes', 'tintShoes']]) {
+        const v = look[k];
+        if (v) {
+          c.set(v);
+          this.tint[u].value.set(c.r, c.g, c.b, 1);
+        } else this.tint[u].value.w = 0;
+      }
+    }
+    if (this.packMat && look.pack) this.packMat.color.set(look.pack);
+  }
+
+  // the backpack from props.glb, worn on the upper back (it follows the chest bone)
+  wear(proto) {
+    if (!proto || this.pack) return;
+    const mats = proto.material.map((m) => m.clone());
+    this.packMat = mats.find((m) => !m.name.endsWith('_fixed')) || null;
+    const pack = new THREE.Mesh(proto.geometry, mats);
+    pack.castShadow = true;
+    const bone = this.model.getObjectByName('Bip01_Spine2');
+    if (!bone) return;
+    this.group.updateMatrixWorld(true);
+    // where it hangs in the avatar's own space: centered, behind the shoulder blades (the
+    // avatar faces -Z, so behind is +Z)
+    const gInv = new THREE.Matrix4().copy(this.group.matrixWorld).invert();
+    const b = new THREE.Vector3().setFromMatrixPosition(bone.matrixWorld).applyMatrix4(gInv);
+    const want = new THREE.Matrix4().makeTranslation(0, b.y - 0.02, b.z + 0.13);
+    const local = new THREE.Matrix4().copy(bone.matrixWorld).invert().multiply(this.group.matrixWorld).multiply(want);
+    local.decompose(pack.position, pack.quaternion, pack.scale);
+    bone.add(pack);
+    this.pack = pack;
+  }
 
   // speed: horizontal m/s; grounded/sprint/swimming as in Character.animate
   animate(dt, speed, grounded, sprint, swimming = false, vy = 0) {
