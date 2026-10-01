@@ -336,6 +336,78 @@ export function buildFurniture(scene, world, info, T, M) {
     props.define('clock', g, new THREE.MeshBasicMaterial({ map: clockTex }));
   }
 
+  // ---- the long science rooms (212-218): you come in at the short end through the door.
+  // Desks face the door wall (the whiteboard is there, beside the door), a square block
+  // pillar stands mid-room (building.js), and the far half is the lab: counters along both
+  // long walls and the far wall, a fume hood, and six lab stations, three off each side
+  // counter. A station is a black-topped lab table joined to the counter by a short section
+  // with a sink (labStation in props.glb), with stools around the table.
+  {
+    const g = new THREE.BoxGeometry(2.4, 0.92, 1.2);
+    g.translate(1.2, 0.46, 0);
+    props.define('labStation', g, std({ color: '#2a2a2a', roughness: 0.4 }));
+  }
+  const cabinet = C('#c9a77c'), epoxy = C('#141414');
+  function scienceRoom(rm, y) {
+    const f = frameOf(rm, rm.doorList[0] ? rm.doorList[0].side : 'S');
+    const col = chairColors[rm.idx % chairColors.length];
+    whiteboard(rm, f, y, Math.min(3.4, f.W / 2 - 1.2));
+    clock(f, y);
+    const mid = f.D / 2; // the pillar
+    // teacher's desk by the front wall, on the side away from the door
+    {
+      const tu = nearDoor(rm, ...f.at(f.W - 1.4, 1.2), 2.4) ? 1.4 : f.W - 1.4;
+      fbox(f, tu - 0.75, tu + 0.75, 0.9, 1.65, y, y + 0.76, C('#7a5634'), 'paint', true);
+      fbox(f, tu - 0.72, tu + 0.72, 0.87, 1.68, y + 0.76, y + 0.79, C('#3b3632'));
+      place('chair', f, tu, 2.0, y, Math.PI, '#444444');
+    }
+    // student desks in pairs, facing the door wall, up to the pillar
+    const pairW = 1.46, aisle = 1.0, dv = 1.5;
+    const np = Math.max(1, Math.floor((f.W - 1.0 + aisle) / (pairW + aisle)));
+    const su = (f.W - (np * pairW + (np - 1) * aisle)) / 2;
+    for (let i = 0; i < np; i++)
+      for (const k of [0, 1]) {
+        const u = su + i * (pairW + aisle) + 0.365 + k * 0.73;
+        for (let v = 2.8; v + 0.45 < mid - 1.1; v += dv) {
+          if (nearDoor(rm, ...f.at(u, v), 1.9)) continue;
+          place('desk', f, u, v, y);
+          place('chair', f, u, v + 0.45, y, (R() - 0.5) * 0.25, col);
+          deskCollider(f, u, v, y);
+        }
+      }
+    // the lab: counters (cabinets with a black top) along the long walls and the far wall
+    const v0 = mid + 1.3, v1 = f.D - 0.1, cd = 0.7;
+    for (const [ua, ub] of [[0.1, cd], [f.W - cd, f.W - 0.1]]) {
+      fbox(f, ua, ub, v0, v1, y, y + 0.88, cabinet, 'paint', true);
+      fbox(f, ua - 0.02, ub + 0.02, v0 - 0.02, v1, y + 0.88, y + 0.92, epoxy);
+    }
+    fbox(f, cd, f.W - cd, f.D - cd, v1, y, y + 0.88, cabinet, 'paint', true);
+    fbox(f, cd, f.W - cd, f.D - cd - 0.02, v1, y + 0.88, y + 0.92, epoxy);
+    // fume hood on the far counter, in the middle
+    fbox(f, f.W / 2 - 0.75, f.W / 2 + 0.75, f.D - cd, v1, y + 0.92, y + 2.35, C('#c9ced3'), 'paint', true);
+    fbox(f, f.W / 2 - 0.68, f.W / 2 + 0.68, f.D - cd - 0.01, f.D - cd + 0.01, y + 1.05, y + 1.85, C('#2a3b48'));
+    // six stations, three off each side counter; the table shortens in a narrower room so
+    // the aisle down the middle stays at least 1.2 m
+    const conn = 0.9, table = Math.max(1.0, Math.min(1.5, (f.W - 2 * cd - 1.2) / 2 - conn));
+    const sx = (conn + table) / 2.4; // the model is 2.4 m long
+    const step = (f.D - cd - 0.2 - v0) / 3; // stations between the pillar and the far counter
+    const [ox, oz] = f.at(0, 0), [ux, uz] = f.at(1, 0);
+    const rotU = Math.atan2(-(uz - oz), ux - ox); // a model's +x along the frame's +u
+    for (const side of [0, 1]) {
+      const sgn = side ? -1 : 1, u0 = side ? f.W - cd : cd;
+      for (let i = 0; i < 3; i++) {
+        const vc = v0 + step * (i + 0.5);
+        const [x, z] = f.at(u0, vc);
+        props.add('labStation', x, y, z, rotU + (side ? Math.PI : 0), null, [sx, 1, 1]);
+        fcollide(f, Math.min(u0, u0 + sgn * (conn + table)), Math.max(u0, u0 + sgn * (conn + table)), vc - 0.6, vc + 0.6, y, y + 0.92);
+        // stools along both sides of the table and one at its end
+        for (const t of [0.3, 0.75])
+          for (const dz of [-0.95, 0.95]) place('stool', f, u0 + sgn * (conn + table * t), vc + dz, y, 0, '#2b2b2b');
+        place('stool', f, u0 + sgn * (conn + table + 0.45), vc, y, 0, '#2b2b2b');
+      }
+    }
+  }
+
   // ---- per-room furnishing
   for (const rm of info.rooms) {
     const y = baseOf(rm);
@@ -346,6 +418,10 @@ export function buildFurniture(scene, world, info, T, M) {
     switch (rm.type) {
       case 'class':
       case 'music': {
+        if (rm.science) {
+          scienceRoom(rm, y);
+          break;
+        }
         const front = frontSide(rm);
         const f = frameOf(rm, front);
         whiteboard(rm, f, y, Math.min(3.8, f.W - 1.4));

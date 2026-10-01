@@ -26,7 +26,7 @@ const CARPETS = ['#6f84ad', '#9a6b4a', '#5d8f7c', '#8b6aa0', '#8f8a4a', '#a85f55
 
 export function floorStyle(room, idx) {
   switch (room.type) {
-    case 'class': return ['carpet', CARPETS[idx % CARPETS.length]];
+    case 'class': return room.science ? ['floorTile', '#d8dbd4'] : ['carpet', CARPETS[idx % CARPETS.length]];
     case 'lab': return ['floorTile', '#d3d7d9'];
     case 'office': return ['carpet', '#7f7568'];
     case 'media': return ['carpet', '#44708f'];
@@ -319,6 +319,14 @@ export function buildBuilding(scene, world, T, M) {
         else if (!g.doors.some((d) => d.entrance && d.a <= (pc.p + pc.q) / 2 && d.b >= (pc.p + pc.q) / 2)) doorways.push({ level, axis: g.axis, c: g.c, p: pc.p, q: pc.q });
       }
     }
+  }
+
+  // the science rooms' square block pillar, mid-room, floor to ceiling
+  for (const rm of rooms) {
+    if (!rm.science) continue;
+    const base = rm.level === 0 ? 0 : LEVEL_H, top = CEIL2[rm.level], h = 0.36;
+    B.get('wall').box(rm.cx - h, base, rm.cz - h, rm.cx + h, top, rm.cz + h, wallColor[rm.level], 'xXzZ');
+    world.add(rm.cx - h, base, rm.cz - h, rm.cx + h, top, rm.cz + h, 1);
   }
 
   // door frames

@@ -569,7 +569,7 @@ function locate() {
     const rm = info.rooms.find((r) => r.level === lv && inRect(r.R, x, z));
     if (rm) {
       where = rm.type === 'stair' ? 'Stairwell' : rm.label && !rm.big && /\d/.test(rm.label) ? 'Room ' + rm.label : rm.name;
-      sub = (abbr(rm) ? abbr(rm) + ' · ' : '') + ({ class: 'Classroom', lab: 'Lab classroom', art: 'Art room', music: 'Music room', lecture: 'Tiered lecture hall', office: 'Office', lav: 'Restroom', locker: 'Locker room', storage: 'Storage', kitchen: 'Kitchen', gym: 'Gymnasium', pool: 'Natatorium', theatre: 'Auditorium', dining: 'Cafeteria', media: 'Library', weights: 'Weight room' }[rm.type] || '');
+      sub = (abbr(rm) ? abbr(rm) + ' · ' : '') + (rm.science ? 'Science classroom' : { class: 'Classroom', lab: 'Lab classroom', art: 'Art room', music: 'Music room', lecture: 'Tiered lecture hall', office: 'Office', lav: 'Restroom', locker: 'Locker room', storage: 'Storage', kitchen: 'Kitchen', gym: 'Gymnasium', pool: 'Natatorium', theatre: 'Auditorium', dining: 'Cafeteria', media: 'Library', weights: 'Weight room' }[rm.type] || '');
       if (rm.label && rm.type !== 'stair') {
         const key = rm.level + ':' + rm.label;
         if (!visited.has(key)) {

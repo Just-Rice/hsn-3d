@@ -676,6 +676,46 @@ def exit_sign():
     return finish('exitSign')
 
 
+def lab_station():
+    # Science lab station, as at the school: a classic black-topped lab table joined to the
+    # wall counter by a short connecting section with a sink, one continuous epoxy top. Origin
+    # at the floor where it meets the counter's front edge; it runs out along +X (2.4 m: 0.9 m
+    # connector, 1.5 m table; the game stretches it to fit the room), centered on Y.
+    if 'epoxy' not in M:
+        M['epoxy'] = material('epoxy', 'Plastic010', color=(0.03, 0.03, 0.032), tile=0.6, normal=0.3, fixed=True)
+        M['labCab'] = material('labCab', 'Wood058', color=(0.86, 0.72, 0.52), tile=1.2, normal=0.2, fixed=True)
+    T, top = 0.03, 0.92
+    # one continuous top over connector and table, edges eased
+    box(0.0, -0.45, top - T, 0.9, 0.45, top, M['epoxy'], bevel=0.006, segs=2)
+    box(0.88, -0.6, top - T, 2.4, 0.6, top, M['epoxy'], bevel=0.006, segs=2)
+    # connector: a sink cabinet with doors on both sides
+    box(0.02, -0.42, 0.1, 0.88, 0.42, top - T, M['labCab'], bevel=0.004)
+    box(0.04, -0.4, 0.0, 0.86, 0.4, 0.1, M['paintDark'])  # toe kick
+    for sy in (-1, 1):
+        y = sy * 0.425
+        box(0.06, min(y, y + sy * 0.006), 0.14, 0.44, max(y, y + sy * 0.006), top - T - 0.04, M['labCab'], bevel=0.003)
+        box(0.46, min(y, y + sy * 0.006), 0.14, 0.84, max(y, y + sy * 0.006), top - T - 0.04, M['labCab'], bevel=0.003)
+        for x in (0.4, 0.5):
+            box(x - 0.006, min(y, y + sy * 0.02), 0.62, x + 0.006, max(y, y + sy * 0.02), 0.74, M['chrome'], bevel=0.002)
+    # sink: a dark basin let into the top, with a gooseneck faucet and two handles behind it
+    box(0.28, -0.2, top - 0.004, 0.72, 0.2, top + 0.001, M['slot'])
+    box(0.3, -0.18, top - 0.2, 0.7, 0.18, top - 0.004, M['slot'])
+    tube([(0.14, 0.0, top), (0.14, 0.0, top + 0.32), (0.3, 0.0, top + 0.38), (0.44, 0.0, top + 0.26)], 0.011, M['chrome'])
+    for sy in (-1, 1):
+        cyl(0.14, sy * 0.12, top, top + 0.07, 0.012, M['chrome'], verts=8)
+        box(0.13, sy * 0.12 - 0.035, top + 0.06, 0.15, sy * 0.12 + 0.035, top + 0.075, M['chrome'], bevel=0.003)
+    # gas cock on the connector, at the table end
+    cyl(0.84, 0.0, top, top + 0.06, 0.01, M['chrome'], verts=8)
+    # table: apron and four square legs on glides
+    box(0.92, -0.56, top - T - 0.12, 2.36, 0.56, top - T, M['labCab'], bevel=0.003)
+    for x in (1.0, 2.3):
+        for sy in (-1, 1):
+            box(x - 0.03, sy * 0.52 - 0.03, 0.0, x + 0.03, sy * 0.52 + 0.03, top - T - 0.1, M['labCab'], bevel=0.004)
+            cyl(x, sy * 0.52, 0.0, 0.012, 0.022, M['rubber'], verts=8)
+    box(1.0, -0.5, 0.18, 2.3, 0.5, 0.2, M['labCab'])  # foot rail / stretcher shelf
+    return finish('labStation')
+
+
 # ------------------------------------------------------------------ AO bake
 def bake_ao(ob):
     me = ob.data
@@ -738,7 +778,7 @@ except Exception as e:  # noqa: BLE001
     scene.cycles.device = 'CPU'
 
 built = []
-for fn in (locker, desk, chair, stool, seat, round_table, clock, lambda: door(M['veneer'], 'doorWood'), lambda: door(M['paint'], 'doorSteel'), troffer, backpack, fountain, trashcan, exit_sign):
+for fn in (locker, desk, chair, stool, seat, round_table, clock, lambda: door(M['veneer'], 'doorWood'), lambda: door(M['paint'], 'doorSteel'), troffer, backpack, fountain, trashcan, exit_sign, lab_station):
     ob = fn()
     built.append(ob)
 x = 0
