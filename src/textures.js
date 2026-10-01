@@ -476,7 +476,7 @@ export function makeStadiumTexture(W, H) {
   }
   // infield turf
   stadiumPath(rin);
-  g.fillStyle = '#2f8a3c';
+  g.fillStyle = '#2d7537';
   g.fill();
   // mowing stripes on the field (turf is artificial but painted stripes look nice)
   const fieldL = 109.7, fieldW = 48.8;

@@ -18,6 +18,7 @@ import { Character, Player, FollowCamera, DEFAULT_LOOK } from './player.js';
 import { Avatar } from './avatar.js';
 import { FloorReflections } from './reflect.js';
 import { loadProps, upgradeProps, cullProps, propFill } from './props.js';
+import { Grass } from './grass.js';
 import { NavGrid } from './nav.js';
 import { Balls } from './balls.js';
 import { loadLightmaps } from './lightmap.js';
@@ -50,9 +51,9 @@ const hot = window.claude?.hot;
 // ------------------------------------------------------------------ renderer + scene
 // Quality tiers. "high" is the full look: soft sun shadows, ambient occlusion, bloom, MSAA.
 const QUALITY = {
-  low: { dpr: 1, shadow: 0, post: false, ao: false, samples: 0, reflect: 0 },
-  medium: { dpr: 1.5, shadow: 2048, post: true, ao: false, samples: 4, reflect: 0.35 },
-  high: { dpr: 2, shadow: 4096, post: true, ao: true, samples: 4, reflect: 0.5 },
+  low: { dpr: 1, shadow: 0, post: false, ao: false, samples: 0, reflect: 0, grass: 0 },
+  medium: { dpr: 1.5, shadow: 2048, post: true, ao: false, samples: 4, reflect: 0.35, grass: 0.5 },
+  high: { dpr: 2, shadow: 4096, post: true, ao: true, samples: 4, reflect: 0.5, grass: 1 },
 };
 let quality = store.get('quality', isTouch ? 'medium' : 'high');
 if (!QUALITY[quality]) quality = 'high';
@@ -276,6 +277,7 @@ function applyQuality() {
   }
   shadowHalf = 0;
   setupBulbs();
+  if (grass && q.grass) grass.setDensity(q.grass);
   scene.traverse((o) => o.material && (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => (m.needsUpdate = true)));
   setupPost();
 }
@@ -296,7 +298,7 @@ const progress = (pct, msg) => {
 };
 
 // ------------------------------------------------------------------ build the world
-let info, ext, nav, maps, world, player, character, cam, balls, furn;
+let info, ext, nav, maps, world, player, character, cam, balls, furn, grass;
 let baked = null; // lightmap manifest once the baked lighting has loaded
 let texturesReady = Promise.resolve(0);
 let running = false;
@@ -360,6 +362,8 @@ async function build() {
     balls.add('soccer', ext.spawn[0] - 0.3, 0.05, ext.spawn[1] - 2.5); // on the walk, between the canopy's columns
   }
   initPathViz();
+  // grass blades on the lawns (a top-down mask of the lawn is rendered here, once)
+  grass = new Grass(scene, renderer, { lawnMaterial: ext.lawnMaterial, bounds: ext.lawnBounds });
   // detailed furniture from Blender replaces the simple shapes once it has loaded
   propsReady
     .then((p) => upgradeProps(scene, p))
@@ -1249,6 +1253,7 @@ function frame() {
     fpsAcc = 0;
     fpsN = 0;
   }
+  grass.update(camera, t, QUALITY[quality].grass > 0 && indoorK < 0.99);
   // the floor under you reflects (indoors, standing on one of the building's floor levels)
   reflections.update(indoorK > 0.5 && !uw ? (player.level ? LEVEL_H : 0) + 0.02 : null);
   if (composer) composer.render(dt);

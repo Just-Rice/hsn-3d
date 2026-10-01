@@ -338,7 +338,7 @@ export function buildExterior(scene, world, info, T, M) {
     const g = new THREE.PlaneGeometry(SW, SH);
     g.rotateX(-Math.PI / 2);
     g.rotateY(Math.PI / 2);
-    const m = new THREE.Mesh(g, offset(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 }), -1));
+    const m = new THREE.Mesh(g, offset(grassDetail(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 }), T.grass, 0.6), -1));
     m.position.set(cx, 0.04, cz);
     m.receiveShadow = true;
     scene.add(m);
@@ -478,7 +478,7 @@ export function buildExterior(scene, world, info, T, M) {
     const g = new THREE.PlaneGeometry(r[3] - r[1], r[2] - r[0]);
     g.rotateX(-Math.PI / 2);
     g.rotateY(-Math.PI / 2);
-    const m = new THREE.Mesh(g, offset(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95, normalMap: T.grassN }), -1));
+    const m = new THREE.Mesh(g, offset(grassDetail(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95, normalMap: T.grassN }), T.grass), -1));
     m.position.set((r[0] + r[2]) / 2, 0.02, (r[1] + r[3]) / 2);
     m.receiveShadow = true;
     scene.add(m);
@@ -714,7 +714,7 @@ export function buildExterior(scene, world, info, T, M) {
   const areaAt = (x, z) => areas.find((a) => (a.r ? inRect(a.r, x, z) : inPoly(a.poly, x, z)))?.name || 'Campus Grounds';
 
   const [spX, spZ] = [sat(0, LANE_Y)[0] + LANE_W / 2 + 1.0, wz(782)];
-  return { flag, flagPos: [fpX, fpZ], stadium, lots: { westLot, eastLot, southLot, yard }, mapShapes, woods, areaAt, spawn: [spX, spZ], cars, buses: ext_buses, carColors, boxCars, trees, treeMeshes };
+  return { flag, flagPos: [fpX, fpZ], stadium, lots: { westLot, eastLot, southLot, yard }, mapShapes, woods, areaAt, spawn: [spX, spZ], lawnMaterial: EM.grass, lawnBounds: [-420, -560, 760, 640], cars, buses: ext_buses, carColors, boxCars, trees, treeMeshes };
 }
 
 // Swaps the box stand-in cars and buses for vehicles modeled in Blender
@@ -837,6 +837,30 @@ export async function loadTrees(scene, ext, base = 'assets/trees/') {
   for (const m of ext.treeMeshes) m.visible = false;
 }
 
+// Big painted-field textures (practice fields, stadium) are coarse; this adds the photo
+// grass texture's fine detail on their green parts, in world space. The detail is the photo's
+// brightness relative to its own average (its smallest mip), so the field keeps its color
+// and its lines stay clean.
+function grassDetail(mat, tex, strength = 0.9, meters = 2.5) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.detailTex = { value: tex };
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vDetailW;')
+      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvDetailW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform sampler2D detailTex; varying vec3 vDetailW;')
+      .replace('#include <map_fragment>', `#include <map_fragment>
+        {
+          float green = smoothstep(0.0, 0.06, diffuseColor.g - max(diffuseColor.r, diffuseColor.b));
+          vec3 lw = vec3(0.2126, 0.7152, 0.0722);
+          float d = dot(texture2D(detailTex, vDetailW.xz / ${meters.toFixed(2)}).rgb, lw) / max(1e-3, dot(textureLod(detailTex, vec2(0.5), 12.0).rgb, lw));
+          diffuseColor.rgb *= mix(1.0, clamp(d, 0.3, 2.0), green * ${strength.toFixed(2)});
+        }`);
+  };
+  mat.customProgramCacheKey = () => 'grass-detail';
+  return mat;
+}
+
 function offset(mat, f) {
   mat.polygonOffset = true;
   mat.polygonOffsetFactor = f;
@@ -860,7 +884,7 @@ function makeFieldsTexture() {
   const g = c.getContext('2d');
   const X = (sx) => (sx - 40) * k, Y = (sy) => (sy - 30) * k;
   const r = rng(5);
-  g.fillStyle = '#6a9a45';
+  g.fillStyle = '#5e8a40';
   g.fillRect(0, 0, W, H);
   for (let i = 0; i < 400; i++) {
     g.fillStyle = `rgba(${60 + r() * 60},${110 + r() * 50},${40 + r() * 30},0.12)`;
