@@ -12,12 +12,13 @@ import { packLightmaps } from './lightmap.js';
 
 const WT = 0.2; // interior wall thickness
 const SK = 0.32; // exterior brick skin thickness
-const PARAPET = 0.9;
+const PARAPET = 0.6; // one-story walls come out 5.0 m to the top of the coping, as measured
 const L1_TOP = CEIL2[1] + 0.05;
 const EPS = 0.06;
-// window sill/head per level: the real facade has small strip windows, in pairs
-const WIN = [[1.1, 2.45], [LEVEL_H + 1.1, LEVEL_H + 2.45]];
-const WIN_W = 1.35, WIN_GAP = 0.4;
+// Window sill/head per level. Photos of the 300s wing show high ribbon windows: white
+// aluminum frames, 0.72 m panes, sill 1.6 m and head 2.35 m above the ground outside.
+const WIN = [[1.55, 2.35], [LEVEL_H + 1.55, LEVEL_H + 2.35]];
+const PANE = 0.72;
 const ENTRY_H = 3.0;
 
 const CARPETS = ['#6f84ad', '#9a6b4a', '#5d8f7c', '#8b6aa0', '#8f8a4a', '#a85f55', '#4f7d99', '#b08a3e'];
@@ -203,23 +204,21 @@ export function buildBuilding(scene, world, T, M) {
         const inPt = P(axis, c - out * 0.6, (u0 + u1) / 2);
         if (!onLevel(lv, inPt[0], inPt[1])) continue;
         if (stairRects.some((sr) => inRect(sr, inPt[0], inPt[1]))) continue;
-        // one pair of windows per ~6 m of wall, or a single window in a narrow bay
-        const n = Math.max(1, Math.floor((len - 0.6) / 6.2));
-        const pitch = (len - 0.4) / n;
-        const pair = pitch >= 2 * WIN_W + WIN_GAP + 0.9;
-        if (!pair && pitch < WIN_W + 0.9) continue;
-        for (let k = 0; k < n; k++) {
-          const m = u0 + 0.2 + pitch * (k + 0.5);
-          const spans = pair ? [[m - WIN_GAP / 2 - WIN_W, m - WIN_GAP / 2], [m + WIN_GAP / 2, m + WIN_GAP / 2 + WIN_W]] : [[m - WIN_W / 2, m + WIN_W / 2]];
-          if (run.openings.some((o) => o.entrance && spans[spans.length - 1][1] > o.a - 0.6 && spans[0][0] < o.b + 0.6)) continue;
-          for (const [a, bw] of spans) {
-            const w = { axis, c, out, a, b: bw, y0, y1, lv };
-            run.openings.push(w);
-            windows.push(w);
-            const key = lineKey(axis, c);
-            if (!windowsByLine[lv].has(key)) windowsByLine[lv].set(key, []);
-            windowsByLine[lv].get(key).push(w);
-          }
+        // one ribbon of up to 9 panes per room (per ~11 m of a long wall), centered in the bay
+        const k = Math.max(1, Math.round(len / 11));
+        const sub = len / k;
+        const n = Math.min(9, Math.floor((sub - 2.0) / PANE));
+        if (n < 2) continue;
+        for (let j = 0; j < k; j++) {
+          const m = u0 + sub * (j + 0.5);
+          const a = m - (n * PANE) / 2, bw = m + (n * PANE) / 2;
+          if (run.openings.some((o) => o.entrance && bw > o.a - 0.6 && a < o.b + 0.6)) continue;
+          const w = { axis, c, out, a, b: bw, y0, y1, lv, n };
+          run.openings.push(w);
+          windows.push(w);
+          const key = lineKey(axis, c);
+          if (!windowsByLine[lv].has(key)) windowsByLine[lv].set(key, []);
+          windowsByLine[lv].get(key).push(w);
         }
       }
     }
@@ -531,7 +530,7 @@ export function buildBuilding(scene, world, T, M) {
   for (const { r, b } of blockRects) {
     const y = ceil0(b);
     const rects = b.levels === 2 ? subtractRects([r], stairRects) : [r];
-    const tall = y > 6; // gyms, pool, theatre, dining: exposed deck instead of ceiling tile
+    const tall = y > 5; // gyms, pool, theatre, dining: exposed deck instead of ceiling tile
     for (const cr of rects) {
       B.get(tall ? 'deck' : 'ceiling').box(cr[0], y, cr[1], cr[2], y + 0.08, cr[3], WHITE, 'y');
       world.add(cr[0], y, cr[1], cr[2], y + 0.08, cr[3], 6);
@@ -553,12 +552,14 @@ export function buildBuilding(scene, world, T, M) {
     });
 
   // ------------------------------------------------------------------ exterior skin with openings
-  const copeCol = hexToRGB('#3a2c26'); // dark metal parapet cap
+  const copeCol = hexToRGB('#d7d0c2'); // light metal coping, as in the 2026 photos
   const bandCol = hexToRGB('#bfb6a6'); // thin light band at the second floor
-  const sillCol = hexToRGB('#5e2a21'); // brick rowlock sills
-  const frameB = B.get('frame');
+  const jointCol = hexToRGB('#a89e92'); // sealant in the vertical control joints
+  const winCol = hexToRGB('#e4e4df'); // white aluminum window frames
+  const frameB = B.get('satin');
   const glassB = B.get('glass');
   const outsideAll = (x, z) => !blockRects.some((br) => inRect(br.r, x, z));
+  const faceOut = (axis, out, extra = '') => (axis === 'z' ? (out > 0 ? 'Z' : 'z') : out > 0 ? 'X' : 'x') + extra;
   for (const run of runs) {
     const { axis, c, p, q, out, hOut, hIn, b } = run;
     // stretch the skin around outside corners only (never into the building)
@@ -579,24 +580,38 @@ export function buildBuilding(scene, world, T, M) {
       }
     }
     segBox(B.get('paint'), axis, c, p0 - 0.04, q0 + 0.04, -out * 0.04, out * (SK + 0.06), hIn, hIn + 0.14, copeCol);
-    if (b.levels === 2 && hOut < LEVEL_H - 0.2) segBox(B.get('paint'), axis, c, p0 - 0.02, q0 + 0.02, out * SK, out * (SK + 0.03), LEVEL_H - 0.18, LEVEL_H - 0.06, bandCol, axis === 'z' ? (out > 0 ? 'ZyY' : 'zyY') : out > 0 ? 'XyY' : 'xyY');
-    // water table (darker brick course) at the base
-    if (hOut === 0) segBox(B.get('paint'), axis, c, p0, q0, out * SK, out * (SK + 0.03), 0, 0.45, hexToRGB('#5d2c22'), axis === 'z' ? (out > 0 ? 'ZY' : 'zY') : out > 0 ? 'XY' : 'xY');
+    // soldier course (bricks on end) a little below the coping, as on the 300s wing
+    const sb0 = hIn - 1.02, sb1 = hIn - 0.72;
+    if (sb0 > hOut + 0.3) segBox(B.get('soldier'), axis, c, p0, q0, out * SK, out * (SK + 0.015), sb0, sb1, WHITE, faceOut(axis, out, 'yY'));
+    if (b.levels === 2 && hOut < LEVEL_H - 0.2) segBox(B.get('paint'), axis, c, p0 - 0.02, q0 + 0.02, out * SK, out * (SK + 0.03), LEVEL_H - 0.18, LEVEL_H - 0.06, bandCol, faceOut(axis, out, 'yY'));
+    // vertical control joints: at the ends of each ribbon window and about every 7.5 m between
+    const js = [];
+    for (const o of run.openings) if (!o.entrance) js.push(o.a - 0.3, o.b + 0.3);
+    for (let u = p0 + 3.8; u < q0 - 1; u += 7.5) if (!js.some((v) => Math.abs(v - u) < 2.5)) js.push(u);
+    const y0j = hOut === 0 ? 0.02 : hOut;
+    for (const u of js) {
+      if (u < p0 + 0.3 || u > q0 - 0.3 || run.openings.some((o) => u > o.a - 0.05 && u < o.b + 0.05)) continue;
+      segBox(B.get('paint'), axis, c, u - 0.012, u + 0.012, out * SK, out * (SK + 0.004), y0j, hIn, jointCol, faceOut(axis, out));
+    }
   }
-  // window glazing, frames and sills
+  // ribbon windows: white frames with a mullion between panes, aluminum sill outside,
+  // painted stool inside
   for (const w of windows) {
-    const { axis, c, out, a, b: bw, y0, y1 } = w;
+    const { axis, c, out, a, b: bw, y0, y1, n } = w;
     const gc = c + out * SK * 0.55;
-    glassB.vquad(axis, gc, a, bw, y0, y1, out);
+    B.get('extGlass').vquad(axis, gc + out * 0.004, a, bw, y0, y1, out);
+    glassB.vquad(axis, gc, a, bw, y0, y1, -out);
     segCollider(axis, c, a, bw, out * SK * 0.5, out * SK * 0.6, y0, y1, 15);
-    const f0 = out * SK * 0.45, f1 = out * SK * 0.7;
-    segBox(frameB, axis, c, a, a + 0.06, f0, f1, y0, y1);
-    segBox(frameB, axis, c, bw - 0.06, bw, f0, f1, y0, y1);
-    segBox(frameB, axis, c, a, bw, f0, f1, y1 - 0.06, y1);
-    segBox(frameB, axis, c, a, bw, f0, f1, y0, y0 + 0.06);
-    segBox(frameB, axis, c, a, bw, f0, f1, y0 + (y1 - y0) * 0.62 - 0.025, y0 + (y1 - y0) * 0.62 + 0.025);
-    // brick sill outside, painted stool inside
-    segBox(B.get('paint'), axis, c, a - 0.05, bw + 0.05, out * SK * 0.7, out * (SK + 0.05), y0 - 0.1, y0, sillCol);
+    const f0 = out * SK * 0.45, f1 = out * SK * 0.72;
+    segBox(frameB, axis, c, a, a + 0.06, f0, f1, y0, y1, winCol);
+    segBox(frameB, axis, c, bw - 0.06, bw, f0, f1, y0, y1, winCol);
+    segBox(frameB, axis, c, a, bw, f0, f1, y1 - 0.07, y1, winCol);
+    segBox(frameB, axis, c, a, bw, f0, f1, y0, y0 + 0.09, winCol);
+    for (let k = 1; k < n; k++) {
+      const u = a + ((bw - a) * k) / n;
+      segBox(frameB, axis, c, u - 0.035, u + 0.035, f0, f1, y0, y1, winCol);
+    }
+    segBox(frameB, axis, c, a - 0.03, bw + 0.03, out * SK * 0.7, out * (SK + 0.05), y0 - 0.04, y0, winCol);
     segBox(B.get('satin'), axis, c, a - 0.05, bw + 0.05, -out * (WT / 2 + 0.1), out * SK * 0.45, y0 - 0.03, y0, hexToRGB('#f1efe9'));
   }
 
@@ -699,37 +714,52 @@ export function buildBuilding(scene, world, T, M) {
 
   // ------------------------------------------------------------------ porch canopy (main entrance)
   {
-    // From the photo of the front: a flat-roofed portico with round white columns, a brick
-    // fascia with a dark metal cap, and the school name in small metal letters.
+    // Measured on a 2026 photo of the entrance (brick courses as the ruler): a flat canopy
+    // with its soffit at 3.8 m, a white trim band, a brick fascia with a soldier course that
+    // carries the school name in white metal letters, a light coping at about 5.4 m, and
+    // round white columns about 0.72 m across in two rows.
     const [x0, z0, x1, z1] = rectW(PORCH);
-    const fy0 = 5.2, fy1 = 6.5; // tall columns, as in the photo
-    B.get('brick').box(x0, fy0, z0, x1 + SK, fy1, z1, WHITE, 'xzZ');
-    B.get('paint').box(x0 - 0.04, fy1, z0 - 0.04, x1 + SK, fy1 + 0.16, z1 + 0.04, copeCol);
-    B.get('paint').box(x0 - 0.02, fy0 + 0.28, z0 - 0.02, x1, fy0 + 0.36, z1 + 0.02, bandCol, 'xzZ');
+    const fy0 = 3.8, trim = fy0 + 0.2, sb0 = trim + 0.3, sb1 = sb0 + 0.36, fy1 = 5.3;
+    B.get('paint').box(x0, fy0, z0, x1 + SK, trim, z1, hexToRGB('#ebe8e1'), 'xzZy');
+    B.get('brick').box(x0, trim, z0, x1 + SK, fy1, z1, WHITE, 'xzZ');
+    B.get('soldier').box(x0 - 0.015, sb0, z0 - 0.015, x1 + SK, sb1, z1 + 0.015, WHITE, 'xzZyY');
+    B.get('paint').box(x0 - 0.04, fy1, z0 - 0.04, x1 + SK, fy1 + 0.12, z1 + 0.04, copeCol);
     B.get('roof').box(x0 + 0.1, fy1, z0 + 0.1, x1, fy1 + 0.05, z1 - 0.1, WHITE, 'Y');
     B.get('paint').hquad(x0 + 0.02, z0 + 0.02, x1, z1 - 0.02, fy0, false, hexToRGB('#e9e6de')); // soffit
     world.add(x0, fy0, z0, x1 + SK, fy1, z1, 6);
-    const colGeo = new THREE.CylinderGeometry(0.38, 0.38, fy0, 24);
+    const colR = 0.36;
+    const colGeo = new THREE.CylinderGeometry(colR, colR, fy0, 28);
     colGeo.translate(0, fy0 / 2, 0);
     const colMat = new THREE.MeshStandardMaterial({ color: '#f2f0ea', roughness: 0.45 });
+    const cols = [];
     const nCol = 5;
-    for (let i = 0; i < nCol; i++) {
-      const cz = z0 + 0.7 + ((z1 - z0 - 1.4) * i) / (nCol - 1);
-      const cx = x0 + 0.7;
+    for (let i = 0; i < nCol; i++) cols.push([x0 + 0.7, z0 + 0.7 + ((z1 - z0 - 1.4) * i) / (nCol - 1)]);
+    // back row near the building, flanking the doors
+    const main = entrances.find((e) => e.main);
+    if (main) for (const cz of [main.a - 1.1, main.b + 1.1]) if (cz > z0 + 0.6 && cz < z1 - 0.6) cols.push([x1 - 1.2, cz]);
+    for (const [cx, cz] of cols) {
       const col = new THREE.Mesh(colGeo, colMat);
       col.position.set(cx, 0, cz);
       col.castShadow = col.receiveShadow = true;
       scene.add(col);
-      B.get('paint').box(cx - 0.4, 0, cz - 0.4, cx + 0.4, 0.12, cz + 0.4, hexToRGB('#d8d4ca'));
-      world.add(cx - 0.39, 0, cz - 0.39, cx + 0.39, fy0, cz + 0.39, 8);
+      B.get('paint').box(cx - colR - 0.02, 0, cz - colR - 0.02, cx + colR + 0.02, 0.1, cz + colR + 0.02, hexToRGB('#d8d4ca'));
+      world.add(cx - colR - 0.01, 0, cz - colR - 0.01, cx + colR + 0.01, fy0, cz + colR + 0.01, 8);
     }
-    // soffit downlights
-    for (let z = z0 + 2; z < z1 - 1; z += 3) lightB.hquad(x0 + 2.2, z - 0.25, x0 + 2.7, z + 0.25, fy0 - 0.01, false);
+    // round soffit downlights
+    for (let z = z0 + 2; z < z1 - 1; z += 3) for (const x of [x0 + 2.2, x1 - 2.4]) lightB.hquad(x - 0.12, z - 0.12, x + 0.12, z + 0.12, fy0 - 0.01, false);
     B.get('concrete').hquad(x0 - 1.5, z0 - 1, x1, z1 + 1, 0.05, true, hexToRGB('#dcd8cf'));
-    const tex = textTexture([{ text: 'WEST WINDSOR-PLAINSBORO HIGH SCHOOL NORTH', size: 0.7, font: 'Arial, Helvetica, sans-serif', weight: '600' }], { w: 2048, h: 110, bg: 'rgba(0,0,0,0)', fg: '#e9e4d8', border: false });
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(12, z1 - z0 - 2), 0.42), new THREE.MeshStandardMaterial({ map: tex, transparent: true, roughness: 0.35, metalness: 0.6 }));
-    sign.position.set(x0 - 0.012, (fy0 + 0.36 + fy1) / 2 + 0.02, (z0 + z1) / 2);
+    // white metal letters (about 27 cm caps) on the soldier course, toward the end away
+    // from room 300, standing off the brick so they cast shadows
+    const tex = textTexture([{ text: 'WEST WINDSOR-PLAINSBORO HIGH SCHOOL NORTH', size: 0.7, font: 'Arial, Helvetica, sans-serif', weight: '700' }], { w: 2048, h: 110, bg: 'rgba(0,0,0,0)', fg: '#f4f2ec', border: false });
+    const sh = 0.68, sw = (sh * 2048) / 110;
+    const r300 = rooms.find((rm) => rm.label === '300');
+    const zm = (z0 + z1) / 2;
+    const shift = Math.max(0, Math.min(1.2, (z1 - z0 - sw * 0.8) / 2 - 0.3)) * (r300 && Math.abs(r300.cz - z0) < Math.abs(r300.cz - z1) ? 1 : -1);
+    const signMat = new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.5, roughness: 0.35, metalness: 0.3 });
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(sw, sh), signMat);
+    sign.position.set(x0 - 0.05, (sb0 + sb1) / 2, zm + shift);
     sign.rotation.y = -Math.PI / 2;
+    sign.castShadow = true;
     scene.add(sign);
   }
 

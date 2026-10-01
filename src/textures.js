@@ -103,15 +103,16 @@ export function makeTextures() {
     if (sf.normal) T[name + 'N'] = sf.normal;
   };
 
-  // --- Brick (running bond), 2.4 m tile: modular 20 x 6.7 cm courses. The mortar is the
-  // same color as the brick (painted over or brick-toned), so a joint is just a shallow
-  // tooled groove that catches a little shadow.
+  // --- Brick (running bond), 2.286 m tile: king-size units, 25.4 x 7.62 cm per brick and
+  // joint (the length-to-course ratio measured on photos of the 300s wing is 3.36). The
+  // mortar is close to the brick color, so a joint is a shallow tooled groove whose edges
+  // catch a little light.
   {
-    const rows = 36, cols = 12, S = 1024, bh = S / rows, bw = S / cols;
-    // dark red-brown, matched to a photo of the front of the school
-    const base = ['#6e2f24', '#763427', '#692c22', '#7c392b', '#723126', '#65291f'];
+    const rows = 30, cols = 9, S = 1024, bh = S / rows, bw = S / cols;
+    // medium red-brown with some lighter and purplish units, from the 2026 photos
+    const base = ['#84503f', '#8a5443', '#7e4b3d', '#8e5847', '#824d41', '#7a4a3e', '#875246', '#8c5645'];
     const tones = [];
-    for (let y = 0; y < rows; y++) for (let x = -1; x <= cols; x++) tones.push(shade(base[Math.floor(r() * base.length)], (r() - 0.5) * 0.045));
+    for (let y = 0; y < rows; y++) for (let x = -1; x <= cols; x++) tones.push(shade(base[Math.floor(r() * base.length)], (r() - 0.5) * 0.03));
     const bricks = (g, fn) => {
       let k = 0;
       for (let y = 0; y < rows; y++) {
@@ -130,8 +131,8 @@ export function makeTextures() {
       }
       g.stroke();
     };
-    put('brick', surface(S, 2.4, (g) => {
-      g.fillStyle = '#6e2f24';
+    put('brick', surface(S, 2.286, (g) => {
+      g.fillStyle = '#84503f';
       g.fillRect(0, 0, S, S);
       bricks(g, (x, y, k) => {
         g.fillStyle = tones[k];
@@ -139,9 +140,9 @@ export function makeTextures() {
       });
       // fired-clay mottling and grit
       speckle(g, S, S, 26000, ['rgba(0,0,0,0.10)', 'rgba(60,20,10,0.12)', 'rgba(255,215,180,0.06)'], r, 1, 3);
-      // the groove reads a touch darker than the face, but it is the same color
-      joints(g, 5, 'rgba(70,25,15,0.16)');
-      joints(g, 2, 'rgba(40,12,8,0.18)');
+      // in the photos the joints read as thin light lines: the tooled edge catches the light
+      joints(g, 5, 'rgba(70,25,15,0.12)');
+      joints(g, 2, 'rgba(214,176,150,0.34)');
     }, (g) => {
       g.fillStyle = '#b4b4b4';
       g.fillRect(0, 0, S, S);
@@ -151,6 +152,61 @@ export function makeTextures() {
       joints(g, 4, 'rgba(0,0,0,0.30)');
       joints(g, 2, 'rgba(0,0,0,0.35)');
     }, 2.2));
+
+    // Soldier band: bricks standing on end, so only vertical joints every 7.62 cm. Each unit
+    // runs the full height of the texture, so the band can sit at any height on the wall.
+    const units = 30, uw = S / units;
+    const ut = [];
+    for (let i = 0; i < units; i++) ut.push(shade(base[Math.floor(r() * base.length)], (r() - 0.55) * 0.05));
+    const vjoints = (g, w, style) => {
+      g.strokeStyle = style;
+      g.lineWidth = w;
+      g.beginPath();
+      for (let i = 0; i <= units; i++) { g.moveTo(i * uw, 0); g.lineTo(i * uw, S); }
+      g.stroke();
+    };
+    put('soldier', surface([S, 256], [2.286, 0.5715], (g) => {
+      for (let i = 0; i < units; i++) {
+        g.fillStyle = ut[i];
+        g.fillRect(i * uw, 0, uw, 256);
+      }
+      speckle(g, S, 256, 6500, ['rgba(0,0,0,0.10)', 'rgba(60,20,10,0.12)', 'rgba(255,215,180,0.06)'], r, 1, 3);
+      vjoints(g, 5, 'rgba(70,25,15,0.12)');
+      vjoints(g, 2, 'rgba(214,176,150,0.34)');
+    }, (g) => {
+      g.fillStyle = '#b4b4b4';
+      g.fillRect(0, 0, S, 256);
+      noise(g, S, 256, 7500, r, 0.22, 1, 3);
+      vjoints(g, 7, 'rgba(0,0,0,0.22)');
+      vjoints(g, 4, 'rgba(0,0,0,0.30)');
+      vjoints(g, 2, 'rgba(0,0,0,0.35)');
+    }, 2.2));
+  }
+
+  // --- Foliage for clipped shrubs: overlapping small leaves in light gray, so each shrub's
+  // instance color tints it; 0.6 m tile.
+  {
+    const S = 256;
+    const leaves = (g, style, n, lo, hi) => {
+      for (let i = 0; i < n; i++) {
+        const x = r() * S, y = r() * S, a = r() * Math.PI, s = 3 + r() * 5;
+        g.fillStyle = typeof style === 'function' ? style() : style;
+        for (const [dx, dy] of [[0, 0], [S, 0], [-S, 0], [0, S], [0, -S]]) {
+          g.beginPath();
+          g.ellipse(x + dx, y + dy, s, s * 0.55, a, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+    };
+    put('foliage', surface(S, 0.6, (g) => {
+      g.fillStyle = '#5d625a';
+      g.fillRect(0, 0, S, S);
+      leaves(g, () => `rgb(${(150 + r() * 90) | 0},${(160 + r() * 90) | 0},${(140 + r() * 80) | 0})`, 1400);
+    }, (g) => {
+      g.fillStyle = '#404040';
+      g.fillRect(0, 0, S, S);
+      leaves(g, () => { const v = (140 + r() * 110) | 0; return `rgb(${v},${v},${v})`; }, 1400);
+    }, 3));
   }
 
   // --- Painted cinder block (interior walls), 2.4 m tile: 40 x 20 cm units, white so

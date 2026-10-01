@@ -253,7 +253,8 @@ function setupPost() {
     aoPass.blendIntensity = 0.85;
     composer.addPass(aoPass);
   }
-  bloomPass = new UnrealBloomPass(new THREE.Vector2(w / 2, h / 2), 0.32, 0.55, 0.92);
+  // threshold above 1 so only light sources glow, not a lit floor catching a reflection
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(w / 2, h / 2), 0.32, 0.55, 1.15);
   composer.addPass(bloomPass);
   composer.addPass(new ShaderPass(VignetteShader));
   composer.addPass(new OutputPass());
@@ -1232,7 +1233,7 @@ function start(data = {}) {
         $('#start').classList.remove('on');
         running = true;
         canvas.focus();
-        toast('Welcome back to WW-P North');
+        toast('Welcome back to HSN');
       };
       go.addEventListener('click', () => {
         begin();

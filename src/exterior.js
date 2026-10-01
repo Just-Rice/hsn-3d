@@ -633,27 +633,51 @@ export function buildExterior(scene, world, info, T, M) {
     }
     treeMeshes.push(trunkM, leafM, pineM);
   }
-  // shrubs along the building's south face
+  // shrubs in mulch beds along the building's south face, as in the photos
   {
     const shrubs = [];
+    const porchZone = [wx(PORCH[0]) - 3, wz(PORCH[1]) - 13, wx(PORCH[2]), wz(PORCH[3]) + 13];
+    const bedOk = (x, z) => !inRect(porchZone, x, z) && !info.entrances.some((e) => Math.hypot(e.axis === 'x' ? e.c - x : 0, e.mid - z) < e.w);
     for (const { r } of info.blockRects) {
       if (r[0] > 12) continue;
       for (let z = r[1] + 1; z < r[3] - 1; z += 2.3) {
         const x = r[0] - 1.6;
-        if (inRect([wx(PORCH[0]) - 3, wz(PORCH[1]) - 13, wx(PORCH[2]), wz(PORCH[3]) + 13], x, z)) continue;
-        if (info.entrances.some((e) => Math.hypot(e.axis === 'x' ? e.c - x : 0, e.mid - z) < e.w)) continue;
+        if (!bedOk(x, z)) continue;
         if (R() < 0.85) shrubs.push([x + (R() - 0.5) * 0.5, z]);
       }
+      let start = null;
+      for (let z = r[1] + 0.5; z <= r[3] - 0.5; z += 0.5) {
+        const ok = bedOk(r[0] - 1.6, z);
+        if (ok && start === null) start = z;
+        const last = z + 0.5 > r[3] - 0.5;
+        if (start !== null && (!ok || last)) {
+          flat('decal', [r[0] - 2.8, start - 0.25, r[0] - 0.33, (ok ? z : z - 0.5) + 0.25], 0.035, C('#3b2b22'));
+          start = null;
+        }
+      }
     }
-    const g = new THREE.IcosahedronGeometry(0.85, 1);
-    g.translate(0, 0.45, 0);
-    const im = new THREE.InstancedMesh(g, new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.9, flatShading: true }), shrubs.length);
+    // a lumpy, clipped mound with a leafy surface (not a faceted ball)
+    const g = new THREE.SphereGeometry(0.85, 28, 18);
+    const pos = g.attributes.position, v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      const n = v.clone().normalize();
+      v.multiplyScalar(1 + 0.08 * Math.sin(n.x * 7.1 + n.y * 3.7) * Math.cos(n.z * 6.3 - n.y * 4.1) + 0.04 * Math.sin(n.x * 17 + n.z * 13 + n.y * 5));
+      if (v.y < -0.3) v.y = -0.3 + (v.y + 0.3) * 0.25; // sits on the mulch, flat underneath
+      pos.setXYZ(i, v.x, v.y, v.z);
+    }
+    g.computeVertexNormals();
+    g.translate(0, 0.38, 0);
+    // sphere UVs wrap once around, so repeat the 0.6 m leaf tile about 9 x 4.5 times
+    const [fm, fn] = [T.foliage.clone(), T.foliageN.clone()];
+    for (const t of [fm, fn]) { t.repeat.set(9, 4.5); t.needsUpdate = true; }
+    const im = new THREE.InstancedMesh(g, new THREE.MeshStandardMaterial({ map: fm, normalMap: fn, normalScale: new THREE.Vector2(1.2, 1.2), roughness: 0.85 }), shrubs.length);
     const mm = new THREE.Matrix4(), col = new THREE.Color();
     shrubs.forEach(([x, z], i) => {
       mm.makeScale(1 + R() * 0.4, 0.8 + R() * 0.4, 1 + R() * 0.4);
       mm.setPosition(x, 0, z);
       im.setMatrixAt(i, mm);
-      im.setColorAt(i, col.setHSL(0.28 + R() * 0.06, 0.5, 0.22 + R() * 0.07));
+      im.setColorAt(i, col.setHSL(0.22 + R() * 0.07, 0.5, 0.3 + R() * 0.08));
     });
     im.castShadow = true;
     im.receiveShadow = true;

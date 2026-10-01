@@ -8,6 +8,7 @@ export function makeMaterials(T) {
   const M = {
     wall: std({ map: T.block, normalMap: T.blockN, normalScale: n(1.0), vertexColors: true, roughness: 0.78 }),
     brick: std({ map: T.brick, normalMap: T.brickN, normalScale: n(1.3), roughness: 0.88 }),
+    soldier: std({ map: T.soldier, normalMap: T.soldierN, normalScale: n(1.3), roughness: 0.88 }),
     floorTile: std({ map: T.tile, normalMap: T.tileN, normalScale: n(0.35), vertexColors: true, roughness: 0.42 }), // waxed VCT: a soft sheen, not a mirror
     carpet: std({ map: T.carpet, normalMap: T.carpetN, normalScale: n(0.7), vertexColors: true, roughness: 1.0 }),
     wood: std({ map: T.wood, normalMap: T.woodN, normalScale: n(0.45), vertexColors: true, roughness: 0.24 }),
@@ -22,6 +23,9 @@ export function makeMaterials(T) {
     frame: std({ color: '#3b3632', roughness: 0.35, metalness: 0.7 }),
     metal: std({ color: '#a3aab1', roughness: 0.28, metalness: 0.9 }),
     glass: std({ color: '#b8cdd9', roughness: 0.03, metalness: 0.1, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide, envMapIntensity: 2.2 }),
+    // outer face of exterior windows: from outside, rooms read darker than daylight, so the
+    // ribbon windows look dark as in the photos; the inner face stays clear glass
+    extGlass: std({ color: '#26323a', roughness: 0.06, metalness: 0.1, transparent: true, opacity: 0.72, depthWrite: false, envMapIntensity: 0.9 }),
     light: new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 3.1, 2.9) }),
     grass: std({ map: T.grass, normalMap: T.grassN, normalScale: n(0.7), roughness: 0.96 }),
     asphalt: std({ map: T.asphalt, normalMap: T.asphaltN, normalScale: n(0.6), roughness: 0.82 }),
