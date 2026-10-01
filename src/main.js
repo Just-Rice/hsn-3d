@@ -15,6 +15,7 @@ import { buildBuilding } from './building.js';
 import { buildFurniture } from './furniture.js';
 import { buildExterior, loadCars, loadTrees, sat } from './exterior.js';
 import { Character, Player, FollowCamera, DEFAULT_LOOK } from './player.js';
+import { Avatar } from './avatar.js';
 import { NavGrid } from './nav.js';
 import { Balls } from './balls.js';
 import { loadLightmaps } from './lightmap.js';
@@ -333,6 +334,15 @@ async function build() {
   scene.add(character.group);
   world.waters = [{ r: info.poolPit, y: -0.22 }];
   player = new Player(world, character);
+  // the realistic avatar replaces the simple figure once it has loaded
+  Avatar.load('assets/models/people/student-m1.glb')
+    .then((av) => {
+      scene.remove(character.group);
+      character = av;
+      player.char = av;
+      scene.add(av.group);
+    })
+    .catch((e) => console.warn('avatar not loaded, keeping the simple figure:', e));
   cam = new FollowCamera(camera, world);
   // balls to kick around
   balls = new Balls(scene, world);
@@ -977,7 +987,7 @@ addEventListener('keydown', (e) => {
     e.preventDefault();
     if (!e.repeat && !openName) jumpQueued = true;
   }
-  if (k.startsWith('Arrow')) e.preventDefault();
+  if (k.startsWith('Arrow') || k.startsWith('Alt')) e.preventDefault(); // Alt walks; don't open the browser menu
   if (e.repeat) {
     keys.add(k);
     return;
@@ -994,7 +1004,10 @@ addEventListener('keydown', (e) => {
   } else if (k === 'Backquote') $('#fps').hidden = !$('#fps').hidden;
   if (!openName) keys.add(k);
 });
-addEventListener('keyup', (e) => keys.delete(e.code));
+addEventListener('keyup', (e) => {
+  keys.delete(e.code);
+  if (e.code.startsWith('Alt')) e.preventDefault();
+});
 addEventListener('blur', () => keys.clear());
 
 canvas.addEventListener('click', () => {
@@ -1111,7 +1124,8 @@ function frame() {
       mv.z += joy.z;
     }
     const sprint = keys.has('ShiftLeft') || keys.has('ShiftRight') || touchSprint;
-    player.update(dt, mv, cam.yaw, sprint, jumpQueued);
+    const walk = keys.has('AltLeft') || keys.has('AltRight');
+    player.update(dt, mv, cam.yaw, sprint, jumpQueued, walk);
     jumpQueued = false;
     if (player.pos.y < -20) teleport(SPOTS()[0].p, SPOTS()[0].yaw);
   } else {
@@ -1264,6 +1278,7 @@ window.__game = {
   get info() { return info; },
   get nav() { return nav; },
   teleport: (...a) => teleport(...a),
+  spots: () => SPOTS(),
   plan: (px, py) => [wx(px), wz(py)],
   view: (p, yaw, pitch = -0.05, dist = null, fp = false) => { teleport(p, yaw); cam.yaw = yaw; cam.pitch = pitch; cam.firstPerson = fp; if (dist) cam.dist = cam.curDist = dist; },
   setDestination: (label, lv) => setDestination(info.rooms.find((r) => r.label === label && (lv === undefined || r.level === lv))),
