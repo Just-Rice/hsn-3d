@@ -16,6 +16,7 @@ import { buildFurniture } from './furniture.js';
 import { buildExterior, loadCars, loadTrees, sat } from './exterior.js';
 import { Character, Player, FollowCamera, DEFAULT_LOOK } from './player.js';
 import { Avatar } from './avatar.js';
+import { FloorReflections } from './reflect.js';
 import { NavGrid } from './nav.js';
 import { Balls } from './balls.js';
 import { loadLightmaps } from './lightmap.js';
@@ -48,9 +49,9 @@ const hot = window.claude?.hot;
 // ------------------------------------------------------------------ renderer + scene
 // Quality tiers. "high" is the full look: soft sun shadows, ambient occlusion, bloom, MSAA.
 const QUALITY = {
-  low: { dpr: 1, shadow: 0, post: false, ao: false, samples: 0 },
-  medium: { dpr: 1.5, shadow: 2048, post: true, ao: false, samples: 4 },
-  high: { dpr: 2, shadow: 4096, post: true, ao: true, samples: 4 },
+  low: { dpr: 1, shadow: 0, post: false, ao: false, samples: 0, reflect: 0 },
+  medium: { dpr: 1.5, shadow: 2048, post: true, ao: false, samples: 4, reflect: 0.35 },
+  high: { dpr: 2, shadow: 4096, post: true, ao: true, samples: 4, reflect: 0.5 },
 };
 let quality = store.get('quality', isTouch ? 'medium' : 'high');
 if (!QUALITY[quality]) quality = 'high';
@@ -59,8 +60,8 @@ const canvas = $('#view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setSize(innerWidth, innerHeight, false);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.92;
+renderer.toneMapping = THREE.NeutralToneMapping; // Khronos PBR Neutral: keeps paint and brick colors true
+renderer.toneMappingExposure = 0.8;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -94,6 +95,7 @@ sky.frustumCulled = false;
 scene.add(sky);
 
 // image-based lighting: the sky (with a grass-colored ground) outdoors, a neutral room indoors
+const reflections = new FloorReflections(renderer, scene, camera);
 const pmrem = new THREE.PMREMGenerator(renderer);
 let skyEnv = (() => {
   const s = new THREE.Scene();
@@ -240,6 +242,9 @@ function setupPost() {
   const dpr = Math.min(devicePixelRatio, q.dpr);
   renderer.setPixelRatio(dpr);
   renderer.setSize(innerWidth, innerHeight, false);
+  reflections.enabled = q.reflect > 0;
+  reflections.scale = q.reflect;
+  reflections.setSize(innerWidth * dpr, innerHeight * dpr);
   if (!q.post) return;
   const w = innerWidth * dpr, h = innerHeight * dpr;
   const rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples: q.samples });
@@ -361,6 +366,12 @@ async function build() {
     balls.add('soccer', ext.spawn[0] - 0.3, 0.05, ext.spawn[1] - 2.5); // on the walk, between the canopy's columns
   }
   initPathViz();
+  // floors that reflect (see reflect.js), with how glossy each finish is
+  const GLOSS = { floorTile: [1, 0.2], wood: [1, 0.22], stage: [0.5, 0.4], ceramic: [0.7, 0.15], concrete: [0.2, 0.6] };
+  for (const [key, mat] of Object.entries(info.materials)) {
+    const g = GLOSS[key.split('@')[0]];
+    if (g) reflections.patch(mat, ...g);
+  }
   applyQuality();
   // baked lighting loads in the background; the game starts with real-time lighting
   loadLightmaps(info.lightmap, info.lightmapped).then((man) => {
@@ -1187,6 +1198,8 @@ function frame() {
     fpsAcc = 0;
     fpsN = 0;
   }
+  // the floor under you reflects (indoors, standing on one of the building's floor levels)
+  reflections.update(indoorK > 0.5 && !uw ? (player.level ? LEVEL_H : 0) + 0.02 : null);
   if (composer) composer.render(dt);
   else renderer.render(scene, camera);
 }
@@ -1296,4 +1309,5 @@ window.__game = {
   setQuality: (q) => { quality = q; applyQuality(); },
   start: () => $('#go').click(),
   renderer,
+  reflections,
 };
