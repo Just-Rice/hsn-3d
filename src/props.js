@@ -67,8 +67,8 @@ export function upgradeProps(scene, protos) {
 // Hides furniture chunks far from the camera (indoors you rarely see more than a hallway's
 // length) and chunks on the other floor, which the floor slab hides anyway.
 const _c = new THREE.Vector3();
-export function cullProps(meshes, cam, indoor) {
-  const far = indoor ? 45 : 90;
+export function cullProps(meshes, cam, indoor, range = [45, 90]) {
+  const far = indoor ? range[0] : range[1];
   for (const m of meshes) {
     const bs = m.boundingSphere;
     if (!bs) continue;

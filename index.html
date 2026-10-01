@@ -79,6 +79,7 @@
   .muted { color: var(--muted); font-size: 14px; }
   #bigmap { width: 100%; height: auto; max-width: 100%; border-radius: 10px; border: 1px solid var(--line); cursor: crosshair; display: block; touch-action: pan-x pan-y; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; pointer-events: auto; }
+  .settings .seg { flex-wrap: wrap; }
   .seg button { border: 0; background: transparent; color: var(--ink); padding: 7px 12px; font: 600 14px var(--ui); cursor: pointer; }
   .seg button.on { background: var(--brand); color: var(--accent); }
   input[type="search"] { width: 100%; padding: 11px 13px; border-radius: 10px; border: 1px solid var(--line); background: var(--keycap); color: var(--ink); font: 16px var(--ui); outline: none; }
@@ -148,6 +149,7 @@
   <button class="btn" data-act="tp" title="Quick travel (T)"><span class="lbl">Quick travel</span> <kbd>T</kbd><span class="ico">⇢</span></button>
   <button class="btn" data-act="view" title="Switch camera (V)"><span class="lbl">Camera</span> <kbd>V</kbd><span class="ico">◎</span></button>
   <button class="btn" data-act="char" title="Your character (C)"><span class="lbl">Character</span> <kbd>C</kbd><span class="ico">☺</span></button>
+  <button class="btn" data-act="set" title="Graphics settings (G)"><span class="lbl">Settings</span> <kbd>G</kbd><span class="ico">⚙</span></button>
 </div>
 <div id="navbar" class="hud panel" hidden><div><div class="t"></div><div class="d"></div></div><button class="btn" id="navcancel">Stop</button></div>
 <div id="toast" class="hud panel"></div>
@@ -155,7 +157,7 @@
 <div id="help" class="hud panel">
   <b>WASD</b> move · <b>Shift</b> sprint · <b>Alt</b> walk · <b>Space</b> jump<br />
   <b>Mouse</b> look (click the view) · <b>Wheel</b> zoom<br />
-  <b>M</b> map · <b>F</b> find a room · <b>T</b> travel · <b>H</b> hide this
+  <b>M</b> map · <b>F</b> find a room · <b>T</b> travel · <b>G</b> settings · <b>H</b> hide this
 </div>
 <div id="fps" class="hud"></div>
 
@@ -211,7 +213,16 @@
     <div class="row"><h2>Your character</h2><div class="spacer"></div><button class="btn" data-close>Done</button></div>
     <div class="swatches" id="charsw"></div>
     <div class="row"><button class="btn" id="charreset">Original clothes</button></div>
-    <div class="row"><span class="muted">Graphics</span><div class="spacer"></div><div class="seg" id="optq" role="group" aria-label="Graphics quality"><button data-q="low">Low</button><button data-q="medium">Medium</button><button data-q="high">High</button></div></div>
+  </div>
+</div>
+
+<div id="setov" class="overlay">
+  <div class="sheet panel" style="width:min(560px,100%)">
+    <div class="row"><h2>Settings</h2><div class="spacer"></div><button class="btn" data-close>Done</button></div>
+    <div class="swatches settings" id="setrows"></div>
+    <div class="muted" id="sethint"></div>
+    <label class="row muted"><input type="checkbox" id="setfps" /> Show frame rate (or press <kbd>`</kbd>)</label>
+    <div class="muted" id="setnow"></div>
   </div>
 </div>
 

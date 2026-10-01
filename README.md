@@ -15,7 +15,7 @@ It runs in the browser with [three.js](https://threejs.org/). There is no build 
 | **Space**: jump | **JUMP** button |
 | **Mouse**: look (click the view to capture the mouse, or drag) | Drag anywhere: look |
 | **Wheel**: zoom the camera | |
-| **M** map · **F** find a room · **T** quick travel · **V** first/third person · **C** character · **H** hide help | Buttons under the minimap |
+| **M** map · **F** find a room · **T** quick travel · **V** first/third person · **C** character · **G** settings · **H** hide help | Buttons under the minimap |
 
 - **Find a room** (F): type `214`, `A104`, `305`, `pool`, `library`… and follow the red dots. Routes go through the real hallways and take the stairs when the room is on the other floor.
 - **Campus map** (M): switch between floors, click a room for directions, double-click to jump there (or double-click anywhere outside).
@@ -24,7 +24,7 @@ It runs in the browser with [three.js](https://threejs.org/). There is no build 
 - The HUD counts how many of the numbered rooms you have visited.
 - **Balls**: basketballs in both gyms, soccer balls on the practice fields and at the front walk, a football on the 50-yard line and a beach ball in the pool. Walk or run into them to kick them.
 - **Swimming**: walk off the pool deck to swim. Space kicks you up, which also gets you back out at the wall.
-- **Graphics** (in the Character panel): *High* has soft sun shadows, ambient occlusion, floor reflections, grass blades, bloom on the lights, 4× MSAA and point lights that follow you indoors. *Medium* drops the ambient occlusion, uses fewer lights, lower-resolution reflections and half the grass. *Low* has no shadows or post-processing, for older phones and laptops.
+- **Settings** (G): *Quality* Auto, Low, Medium, High or Ultra. Auto (the default) guesses from your graphics chip, then drops a level by itself if the game can't keep up, and remembers what worked. *Low* has no shadows, reflections, grass or post-processing and renders at 75% resolution, for Chromebooks and older laptops; *Medium* adds shadows, bloom, light reflections and grass; *High* adds ambient occlusion and sharper shadows and reflections; *Ultra* is everything at full resolution. *Frame rate* caps it at 30, 60 or no cap, and *Resolution* is Auto (lowered while the frame rate is low) or a fixed 50/75/100%. Press <kbd>`</kbd> to show the frame rate.
 - **Map** (M): north is up. Drag to pan, scroll or pinch to zoom out to the whole campus.
 
 ## Run it locally

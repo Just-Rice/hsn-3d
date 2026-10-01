@@ -49,13 +49,36 @@ const isTouch = matchMedia('(pointer: coarse)').matches;
 const hot = window.claude?.hot;
 
 // ------------------------------------------------------------------ renderer + scene
-// Quality tiers. "high" is the full look: soft sun shadows, ambient occlusion, bloom, MSAA.
+// Quality tiers, cheapest first. dpr: the most pixels per CSS pixel; shadow: sun shadow map
+// size (0 = none); post: ambient occlusion (ao), bloom and grading; reflect: floor reflection
+// resolution (0 = none); grass: blade density; bulbs: real-time lights that follow you;
+// far: how far indoor / outdoor furniture is drawn.
+const TIERS = ['low', 'medium', 'high', 'ultra'];
 const QUALITY = {
-  low: { dpr: 1, shadow: 0, post: false, ao: false, samples: 0, reflect: 0, grass: 0 },
-  medium: { dpr: 1.5, shadow: 2048, post: true, ao: false, samples: 4, reflect: 0.35, grass: 0.5 },
-  high: { dpr: 2, shadow: 4096, post: true, ao: true, samples: 4, reflect: 0.5, grass: 1 },
+  low: { dpr: 0.75, shadow: 0, post: false, ao: false, samples: 0, reflect: 0, grass: 0, bulbs: 0, far: [25, 50] },
+  medium: { dpr: 1, shadow: 1024, post: true, ao: false, samples: 2, reflect: 0.25, grass: 0.35, bulbs: 3, far: [35, 70] },
+  high: { dpr: 1.5, shadow: 2048, post: true, ao: true, samples: 4, reflect: 0.4, grass: 0.75, bulbs: 6, far: [45, 90] },
+  ultra: { dpr: 2, shadow: 4096, post: true, ao: true, samples: 4, reflect: 0.5, grass: 1, bulbs: 8, far: [60, 120] },
 };
-let quality = store.get('quality', isTouch ? 'medium' : 'high');
+// What the player picked in Settings. quality: 'auto' or a tier; fps: frame cap (0 = none);
+// res: 'auto' (adaptive) or a fixed fraction of the tier's resolution.
+const gfx = { quality: 'auto', fps: 60, res: 'auto', showFps: false, ...store.get('gfx', {}) };
+if (!store.get('gfx', null) && QUALITY[store.get('quality', '')]) gfx.quality = store.get('quality'); // older saves
+// The tier in use. Auto starts from a guess about the GPU (or from what worked last time) and
+// steps down by itself if the game can't keep up even at its lowest resolution.
+function guessTier() {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
+    const name = (ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : '') || '';
+    if (/swiftshader|llvmpipe|software|mali-[gt]?[0-9]{1,2}\b|adreno \(tm\) [3-5]/i.test(name)) return 'low';
+    if (/intel|mali|adreno|powervr|apple gpu/i.test(name) || isTouch) return 'medium';
+  } catch {
+    /* no WebGL info: fall through */
+  }
+  return 'high';
+}
+let quality = gfx.quality === 'auto' ? store.get('autoTier', null) || guessTier() : gfx.quality;
 if (!QUALITY[quality]) quality = 'high';
 
 const canvas = $('#view');
@@ -116,11 +139,11 @@ const HEMI_OUT = [new THREE.Color(0xdfe9ff), new THREE.Color(0x8a7f6c)];
 const HEMI_IN = [new THREE.Color(0xf4f1ea), new THREE.Color(0xa7a6a2)];
 // Ceiling fixtures near the player get real point lights (a small pool that follows you),
 // so hallways and rooms have pools of light instead of flat ambient.
-const BULBS = { low: 0, medium: 4, high: 8 };
+
 const bulbs = [];
 let bulbTimer = 0;
 function setupBulbs() {
-  const n = BULBS[quality];
+  const n = QUALITY[quality].bulbs;
   while (bulbs.length > n) scene.remove(bulbs.pop().light);
   while (bulbs.length < n) {
     const light = new THREE.PointLight(0xf3f2ee, 0, 10, 2);
@@ -241,7 +264,7 @@ function setupPost() {
     composer.dispose();
   }
   composer = aoPass = bloomPass = null;
-  const dpr = Math.max(0.6, Math.min(devicePixelRatio, q.dpr) * resScale);
+  const dpr = Math.max(0.5, Math.min(devicePixelRatio, q.dpr) * resScale);
   renderer.setPixelRatio(dpr);
   renderer.setSize(innerWidth, innerHeight, false);
   reflections.enabled = q.reflect > 0;
@@ -267,23 +290,58 @@ function setupPost() {
   composer.addPass(new ShaderPass(VignetteShader));
   composer.addPass(new OutputPass());
 }
-// Adaptive resolution: if the frame rate stays low for a few seconds, render fewer pixels
-// (down to 55% of the tier's pixel ratio); with headroom, step back up. Changes are rare
-// (every 4 s at most) because resizing the render targets causes a hitch.
-let resScale = 1, resLow = 0, resHigh = 0, resWait = 4;
+// Adaptive resolution (Settings > Resolution: Auto): if the frame rate stays well under the
+// target for a few seconds, render fewer pixels (down to 55% of the tier's); with headroom,
+// step back up. With Quality on Auto, a tier that still can't keep up at 70% resolution
+// steps down to the next one (and the game remembers it). Changes are rare
+// because resizing the render targets causes a hitch. Called every half second.
+const RES_MIN = 0.55;
+let resScale = typeof gfx.res === 'number' ? gfx.res : 1, resLow = 0, resHigh = 0, resWait = 4;
+let tierLow = 0, tierHigh = 0, autoCeil = TIERS.indexOf('high');
+let lastFps = 0;
 function adaptResolution(fps) {
-  if (!running || document.hidden || window.__fixedRes) return; // __fixedRes: for screenshots
+  lastFps = fps;
+  if (!running || document.hidden || openName || window.__fixedRes) return; // __fixedRes: for screenshots
+  const target = gfx.fps || 60;
   resWait -= 0.5;
-  resLow = fps < 38 ? resLow + 0.5 : 0;
-  resHigh = fps > 57 ? resHigh + 0.5 : 0;
-  if (resWait > 0) return;
-  const next = resLow >= 3 ? Math.max(0.55, resScale - 0.15) : resHigh >= 6 ? Math.min(1, resScale + 0.15) : resScale;
+  resLow = fps < target * 0.65 ? resLow + 0.5 : 0;
+  resHigh = fps > target * 0.95 ? resHigh + 0.5 : 0;
+  // Auto quality: once the resolution is down to 70%, a lower tier at full resolution looks
+  // better than this one any blurrier, so step the tier down instead
+  const resMin = gfx.quality === 'auto' && quality !== 'low' ? 0.7 : RES_MIN;
+  if (gfx.quality === 'auto') {
+    const floor = gfx.res === 'auto' ? resScale <= resMin + 0.01 : true;
+    tierLow = fps < target * 0.8 && floor ? tierLow + 0.5 : 0;
+    tierHigh = fps > target * 0.97 && resScale >= 1 ? tierHigh + 0.5 : 0;
+    const i = TIERS.indexOf(quality);
+    if (tierLow >= 5 && i > 0) {
+      autoCeil = i - 1; // don't climb back to the tier that couldn't keep up
+      setTier(TIERS[i - 1]);
+      toast(`Graphics set to ${TIERS[i - 1]} to keep things smooth`);
+      return;
+    }
+    if (tierHigh >= 30 && i < autoCeil) {
+      setTier(TIERS[i + 1]);
+      return;
+    }
+  }
+  if (gfx.res !== 'auto' || resWait > 0) return;
+  const next = resLow >= 3 ? Math.max(resMin, resScale - 0.15) : resHigh >= 6 ? Math.min(1, resScale + 0.15) : resScale;
   if (next !== resScale) {
     resScale = next;
     resWait = 4;
     resLow = resHigh = 0;
     setupPost();
   }
+}
+function setTier(t) {
+  quality = t;
+  if (gfx.quality === 'auto') store.set('autoTier', t);
+  resScale = typeof gfx.res === 'number' ? gfx.res : 1;
+  resWait = 4;
+  tierLow = tierHigh = resLow = resHigh = 0;
+  applyQuality();
+  if (openName === 'set') renderSettings();
 }
 function applyQuality() {
   const q = QUALITY[quality];
@@ -690,7 +748,7 @@ function updateNav(dt, force = false) {
 $('#navcancel').addEventListener('click', clearNav);
 
 // ------------------------------------------------------------------ overlays
-const overlays = { map: '#mapov', find: '#findov', tp: '#tpov', char: '#charov' };
+const overlays = { map: '#mapov', find: '#findov', tp: '#tpov', char: '#charov', set: '#setov' };
 let openName = null;
 function closeOverlays() {
   for (const s of Object.values(overlays)) $(s).classList.remove('on');
@@ -713,6 +771,7 @@ function openOverlay(name) {
   }
   if (name === 'tp') renderTp();
   if (name === 'char') renderChar();
+  if (name === 'set') renderSettings();
 }
 $$('[data-close]').forEach((b) => b.addEventListener('click', closeOverlays));
 $$('.overlay').forEach((o) => o.addEventListener('pointerdown', (e) => { if (e.target === o && o.id !== 'start') closeOverlays(); }));
@@ -1028,7 +1087,6 @@ function renderChar() {
     sw.appendChild(inp);
     box.append(l, sw);
   }
-  $$('#optq button').forEach((b) => b.classList.toggle('on', b.dataset.q === quality));
 }
 function setPart(k, col, rerender = true) {
   const look = currentLook();
@@ -1043,15 +1101,58 @@ $('#charreset').addEventListener('click', () => {
   character.setLook(look);
   renderChar();
 });
-$$('#optq button').forEach((b) =>
-  b.addEventListener('click', () => {
-    quality = b.dataset.q;
-    resScale = 1;
-    store.set('quality', quality);
-    applyQuality();
-    renderChar();
-  }),
-);
+// --- settings (graphics)
+const SETTINGS = [
+  ['quality', 'Quality', [['auto', 'Auto'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['ultra', 'Ultra']]],
+  ['fps', 'Frame rate', [[30, '30'], [60, '60'], [0, 'No cap']]],
+  ['res', 'Resolution', [['auto', 'Auto'], [0.5, '50%'], [0.75, '75%'], [1, '100%']]],
+];
+const SETTING_HINTS = {
+  quality: { auto: 'Picks a level for your computer and lowers it if the game slows down.', low: 'For Chromebooks and older laptops: no shadows, reflections, grass or effects.', medium: 'Shadows, bloom, some reflections and grass.', high: 'Ambient occlusion, sharper shadows and reflections, more grass.', ultra: 'Everything at full resolution. Needs a fast graphics card.' },
+};
+function renderSettings() {
+  const box = $('#setrows');
+  box.innerHTML = '';
+  for (const [k, label, opts] of SETTINGS) {
+    const l = document.createElement('div');
+    l.className = 'muted';
+    l.textContent = label;
+    const seg = document.createElement('div');
+    seg.className = 'seg';
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', label);
+    for (const [v, name] of opts) {
+      const b = document.createElement('button');
+      b.textContent = name;
+      if (gfx[k] === v) b.classList.add('on');
+      b.addEventListener('click', () => setSetting(k, v));
+      seg.appendChild(b);
+    }
+    box.append(l, seg);
+  }
+  const hint = SETTING_HINTS.quality[gfx.quality];
+  $('#sethint').textContent = hint || '';
+  $('#setfps').checked = gfx.showFps;
+  $('#setnow').textContent = `Now: ${quality} quality, ${Math.round(Math.max(0.5, Math.min(devicePixelRatio, QUALITY[quality].dpr) * resScale) * 100) / 100}× pixels${lastFps ? `, ${Math.round(lastFps)} fps` : ''}`;
+}
+function setSetting(k, v) {
+  gfx[k] = v;
+  store.set('gfx', gfx);
+  if (k === 'quality') {
+    autoCeil = TIERS.indexOf('high');
+    setTier(v === 'auto' ? store.get('autoTier', null) || guessTier() : v);
+  } else if (k === 'res') {
+    resScale = typeof v === 'number' ? v : 1;
+    resWait = 4;
+    setupPost();
+  }
+  renderSettings();
+}
+$('#setfps').addEventListener('change', (e) => {
+  gfx.showFps = e.target.checked;
+  store.set('gfx', gfx);
+  $('#fps').hidden = !gfx.showFps;
+});
 
 // ------------------------------------------------------------------ input
 const keys = new Set();
@@ -1078,12 +1179,17 @@ addEventListener('keydown', (e) => {
   else if (k === 'KeyF') openOverlay('find');
   else if (k === 'KeyT') openOverlay('tp');
   else if (k === 'KeyC') openOverlay('char');
+  else if (k === 'KeyG') openOverlay('set');
   else if (k === 'KeyV' && !openName) toggleView();
   else if (k === 'KeyH') {
     const h = $('#help');
     h.hidden = !h.hidden;
     store.set('help', !h.hidden);
-  } else if (k === 'Backquote') $('#fps').hidden = !$('#fps').hidden;
+  } else if (k === 'Backquote') {
+    gfx.showFps = !gfx.showFps;
+    store.set('gfx', gfx);
+    $('#fps').hidden = !gfx.showFps;
+  }
   if (!openName) keys.add(k);
 });
 addEventListener('keyup', (e) => {
@@ -1190,8 +1296,13 @@ const clock = new THREE.Clock();
 const miniCtx = $('#mini').getContext('2d');
 let hudTimer = 0, fpsAcc = 0, fpsN = 0, indoorK = 0;
 const dotM = new THREE.Matrix4();
-function frame() {
+let lastFrameT = 0;
+function frame(now = performance.now()) {
   requestAnimationFrame(frame);
+  // frame cap (Settings > Frame rate): skip display refreshes until the next frame is due;
+  // 2 ms of slack so a 60 cap on a 60 Hz screen never drops a frame
+  if (gfx.fps && now - lastFrameT < 1000 / gfx.fps - 2) return;
+  lastFrameT = now;
   const dt = Math.min(clock.getDelta(), 0.05);
   const t = clock.elapsedTime;
   if (!player) return;
@@ -1261,8 +1372,8 @@ function frame() {
   if (hudTimer <= 0) {
     hudTimer = 0.2;
     locate();
-    cullProps(furn.props, camera.position, indoorK > 0.5);
-    cullProps(info.propMeshes, camera.position, indoorK > 0.5);
+    cullProps(furn.props, camera.position, indoorK > 0.5, QUALITY[quality].far);
+    cullProps(info.propMeshes, camera.position, indoorK > 0.5, QUALITY[quality].far);
   }
   const mc = $('#mini');
   drawMinimap(miniCtx, mc.width, maps, p.x, p.z, cam.yaw, player.yaw, navPath, player.level, navDest && navDest.lv === player.level ? navDest : null);
@@ -1270,7 +1381,7 @@ function frame() {
   fpsN++;
   if (fpsAcc > 0.5) {
     const fps = fpsN / fpsAcc;
-    $('#fps').textContent = Math.round(fps) + ' fps' + (resScale < 1 ? ` · ${Math.round(resScale * 100)}% res` : '');
+    $('#fps').textContent = `${Math.round(fps)} fps · ${quality}` + (resScale < 1 ? ` · ${Math.round(resScale * 100)}% res` : '');
     fpsAcc = 0;
     fpsN = 0;
     adaptResolution(fps);
@@ -1324,7 +1435,7 @@ function start(data = {}) {
   build()
     .then(() => {
       $('#help').hidden = !store.get('help', !isTouch);
-      $('#fps').hidden = true;
+      $('#fps').hidden = !gfx.showFps;
       const s0 = SPOTS()[0];
       if (data.pos) {
         teleport(data.pos, data.yaw ?? 0);
@@ -1387,7 +1498,7 @@ window.__game = {
   get balls() { return balls; },
   get texturesReady() { return texturesReady; },
   freeCam: (pos, at, up) => { freeCam = pos ? [pos, at, up] : null; },
-  setQuality: (q) => { quality = q; applyQuality(); },
+  setQuality: (q) => setTier(q),
   start: () => $('#go').click(),
   renderer,
   reflections,
