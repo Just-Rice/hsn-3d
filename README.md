@@ -11,7 +11,7 @@ It runs in the browser with [three.js](https://threejs.org/). There is no build 
 | Keyboard / mouse | Touch |
 | --- | --- |
 | **W A S D** or arrows: walk | Left pad: walk |
-| **Shift**: run | **RUN** button |
+| **Shift**: sprint · **Alt**: walk | **RUN** button · push the pad lightly to walk |
 | **Space**: jump | **JUMP** button |
 | **Mouse**: look (click the view to capture the mouse, or drag) | Drag anywhere: look |
 | **Wheel**: zoom the camera | |
@@ -20,11 +20,11 @@ It runs in the browser with [three.js](https://threejs.org/). There is no build 
 - **Find a room** (F): type `214`, `A104`, `305`, `pool`, `library`… and follow the red dots. Routes go through the real hallways and take the stairs when the room is on the other floor.
 - **Campus map** (M): switch between floors, click a room for directions, double-click to jump there (or double-click anywhere outside).
 - **Quick travel** (T): Main Hall, Main Office, Media Center, courtyard, theatre stage, pool deck, gyms, the 2nd floor, the stadium, tennis courts, practice fields, bus loop and parking.
-- **Character** (C): pick your shirt, pants, hair, skin, shoes and backpack colors. Choices are saved in your browser.
+- **Character** (C): pick one of four students and recolor their top, pants, shoes and backpack (or keep their own clothes). Choices are saved in your browser.
 - The HUD counts how many of the numbered rooms you have visited.
 - **Balls**: basketballs in both gyms, soccer balls on the practice fields and at the front walk, a football on the 50-yard line and a beach ball in the pool. Walk or run into them to kick them.
 - **Swimming**: walk off the pool deck to swim. Space kicks you up, which also gets you back out at the wall.
-- **Graphics** (in the Character panel): *High* has soft sun shadows, ambient occlusion, bloom on the lights, 4× MSAA and point lights that follow you indoors. *Medium* drops the ambient occlusion and uses fewer lights. *Low* has no shadows or post-processing, for older phones and laptops.
+- **Graphics** (in the Character panel): *High* has soft sun shadows, ambient occlusion, floor reflections, grass blades, bloom on the lights, 4× MSAA and point lights that follow you indoors. *Medium* drops the ambient occlusion, uses fewer lights, lower-resolution reflections and half the grass. *Low* has no shadows or post-processing, for older phones and laptops.
 - **Map** (M): north is up. Drag to pan, scroll or pinch to zoom out to the whole campus.
 
 ## Run it locally
@@ -69,9 +69,17 @@ Every room is transcribed in [`src/layout.js`](src/layout.js) as rectangles in "
 - The practice fields to the north: soccer, field hockey, the softball and baseball diamonds and a lined practice field.
 - The woods and creek to the north-east, the tree line along the west edge, and Community Middle School across Grovers Mill Road.
 
-**Graphics.** Materials are physically based (`src/materials.js`) with procedural color and normal maps (`src/textures.js`). The sky is a physical sky model that also lights the scene through image-based lighting outdoors; indoors a neutral room environment takes over. The sun casts soft shadows; indoors the shadow map covers the whole building so rooms far down a hallway are still shaded by the roof. The post-processing chain is ambient occlusion (GTAO), bloom, a light vignette and ACES tone mapping.
+**Graphics.** Materials are physically based (`src/materials.js`) with procedural color and normal maps (`src/textures.js`). The sky is a physical sky model that also lights the scene through image-based lighting outdoors; indoors a neutral room environment takes over. The sun casts soft shadows; indoors the shadow map covers the whole building so rooms far down a hallway are still shaded by the roof. The waxed hallway tile, the gym floor and the stage reflect the room: a mirrored render at the height of the floor you stand on, blurred by the finish and rippled by the floor's normal map (`src/reflect.js`). The post-processing chain is ambient occlusion (GTAO), bloom, a light vignette and Khronos PBR Neutral tone mapping, which keeps paint and brick colors true.
 
 **Materials.** Inside, the walls are painted cinder block (7 × 14 in units with a pitted face and concave joints). Outside is king-size brick in running bond; the mortar is close to the brick color, so a joint reads as a shallow groove with a thin light edge, as in the photos, and a soldier course runs just below the coping. Ceiling tile, carpet, the gym's maple floor, concrete, asphalt and grass are photo-scanned CC0 textures from [ambientCG](https://ambientcg.com) (see [`assets/textures/CREDITS.md`](assets/textures/CREDITS.md)); they stream in over procedural stand-ins.
+
+**The player.** The student you play is one of Microsoft's [Rocketbox](https://github.com/microsoft/Microsoft-Rocketbox) avatars (MIT), with real motion capture: walking from the [Bandai Namco Research Motion dataset](https://github.com/BandaiNamcoResearchInc/Bandai-Namco-Research-Motiondataset) (CC BY-NC 4.0), standing, jogging, sprinting, jumping and swimming from the [CMU motion capture database](http://mocap.cs.cmu.edu/). [`tools/character`](tools/character) retargets the clips onto the avatar in Blender, cuts them into seamless loops and exports a glTF; [`src/avatar.js`](src/avatar.js) blends walk, jog and sprint by speed on a shared, heel-strike-aligned phase so the feet don't slide, times the jump to the game's physics, and recolors clothes through a mask made in Blender. Movement speeds match the capture (a 3.4 m/s jog, 5.6 m/s sprint, 1.4 m/s walk). See [`assets/models/people/CREDITS.md`](assets/models/people/CREDITS.md).
+
+**Furniture, doors and lights.** Lockers (louvers, recessed handle, hasp, number plate, toe kick), student desks, shell chairs, lab stools, theatre seats, cafeteria tables, the wall clock, the oak classroom doors (vision lite, lever handles, kick plates, hinges, closer), 2×4 prismatic troffers and the backpack are modeled in Blender by [`tools/props/build_props.py`](tools/props/build_props.py) with PBR materials from ambientCG and a baked ambient-occlusion map each, then instanced over the simple shapes, which stay as a fallback. They are culled by 24 m cell and distance, and get an indoor fill light matching the lightmapped walls.
+
+**Vehicles.** Sedans, hatchbacks, SUVs, minivans, pickups, box trucks and Type C school buses are lofted in Blender from side and plan profiles ([`tools/vehicles/build_vehicles.py`](tools/vehicles/build_vehicles.py)), with glass, light clusters, grilles, plates, handles and door seams placed on the body by ray casting, cut wheel arches and five-spoke wheels; clearcoat paint takes each car's color.
+
+**Grass.** Tufts of grass blades wrap around the camera on the lawns, masked by a top-down render of the lawn made at load, thinning with distance and moving in the wind (`src/grass.js`). The practice fields and stadium turf get the photo grass's fine detail in world space.
 
 **Sky.** A photographed partly cloudy sky ([Poly Haven](https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky), CC0) is the backdrop and lights the outdoors; the sun direction comes from the photo. Trees are Poly Haven tree models (CC0) rendered into sprites in Blender ([`tools/bake/tree_sprites.py`](tools/bake/tree_sprites.py)) and drawn as crossed billboards, so the woods can hold thousands of them.
 
@@ -96,15 +104,22 @@ src/furniture.js  desks, labs, theatre seats, gyms, cafeteria, library, lockers
 src/exterior.js   the campus, traced from satellite imagery: roads, lots, stadium, tennis, fields, woods
 src/materials.js  shared physically based materials
 src/balls.js      kickable balls (basketballs, soccer balls, a football, a beach ball)
-src/player.js     character model, movement physics (coyote time, jump buffering, swimming), follow camera
+src/player.js     movement physics (coyote time, jump buffering, swimming), follow camera, the simple stand-in figure
+src/avatar.js     the realistic player: motion-capture playback and blending, clothing colors, backpack
+src/props.js      swaps in the Blender furniture, doors and lights; culling and indoor fill light
+src/reflect.js    planar floor reflections
+src/grass.js      grass blades on the lawns
 src/physics.js    box colliders in a spatial hash, stairs and sunken floors
 src/nav.js        A* pathfinding across both floors (stairwells link them)
 src/map.js        minimap and campus map (north-up)
 src/textures.js   procedural textures and normal maps (brick, block, tile, carpet, turf…) with no image files
 src/lightmap.js   lightmap UV atlas for the walls, floors and ceilings, and the lightmap loader
-lightmaps/        baked lighting (two 2048² pages and a manifest)
-assets/           CC0 textures, the sky, and car models (credits in each folder)
+lightmaps/        baked lighting (2048² pages at 10 cm per texel, and a manifest)
+assets/           textures, the sky, tree sprites, and the models: people, props, vehicles (credits in each folder)
 tools/bake/       scene export (Playwright) and the Blender bake + encode scripts
+tools/character/  avatar textures, motion-capture retargeting and export (Blender)
+tools/props/      furniture, doors, light fixtures, backpack (Blender)
+tools/vehicles/   cars, trucks, school buses (Blender)
 tools/build-artifact.mjs  packages the page for a Claude Artifact preview
 docs/             photos of the original floor-plan handout, one per floor
 ```
@@ -120,7 +135,7 @@ blender -b -P tools/bake/bake.py -- tools/bake/out lightmaps 64
 # or: pip install bpy pillow numpy && python tools/bake/bake.py tools/bake/out lightmaps 64
 ```
 
-The last number is Cycles samples per texel; 64 takes about an hour on a 4-core CPU. To rebalance the fixtures, sky and sun without baking again, run `python tools/bake/encode.py tools/bake/out lightmaps 0.38 1 1`.
+Blender's bundled Python needs Pillow for the final encode step: `<blender>/Contents/Resources/4.x/python/bin/python3.11 -m pip install pillow` (or encode afterwards with `python tools/bake/encode.py tools/bake/out lightmaps`, which skips the OIDN denoiser). The last number is Cycles samples per texel; The bake uses the GPU when Blender finds one (Metal, OptiX, CUDA, HIP). The export uses the simple stand-in furniture and cars, which are plenty for the light. To rebalance the fixtures, sky and sun without baking again, run `python tools/bake/encode.py tools/bake/out lightmaps 0.38 1 1`.
 
 ### Fixing a room
 

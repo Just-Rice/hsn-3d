@@ -241,7 +241,7 @@ function setupPost() {
     composer.dispose();
   }
   composer = aoPass = bloomPass = null;
-  const dpr = Math.min(devicePixelRatio, q.dpr);
+  const dpr = Math.max(0.6, Math.min(devicePixelRatio, q.dpr) * resScale);
   renderer.setPixelRatio(dpr);
   renderer.setSize(innerWidth, innerHeight, false);
   reflections.enabled = q.reflect > 0;
@@ -266,6 +266,24 @@ function setupPost() {
   composer.addPass(bloomPass);
   composer.addPass(new ShaderPass(VignetteShader));
   composer.addPass(new OutputPass());
+}
+// Adaptive resolution: if the frame rate stays low for a few seconds, render fewer pixels
+// (down to 55% of the tier's pixel ratio); with headroom, step back up. Changes are rare
+// (every 4 s at most) because resizing the render targets causes a hitch.
+let resScale = 1, resLow = 0, resHigh = 0, resWait = 4;
+function adaptResolution(fps) {
+  if (!running || document.hidden || window.__fixedRes) return; // __fixedRes: for screenshots
+  resWait -= 0.5;
+  resLow = fps < 38 ? resLow + 0.5 : 0;
+  resHigh = fps > 57 ? resHigh + 0.5 : 0;
+  if (resWait > 0) return;
+  const next = resLow >= 3 ? Math.max(0.55, resScale - 0.15) : resHigh >= 6 ? Math.min(1, resScale + 0.15) : resScale;
+  if (next !== resScale) {
+    resScale = next;
+    resWait = 4;
+    resLow = resHigh = 0;
+    setupPost();
+  }
 }
 function applyQuality() {
   const q = QUALITY[quality];
@@ -387,6 +405,7 @@ async function build() {
 // ------------------------------------------------------------------ the player's avatar
 // Rocketbox students with motion capture (avatar.js); the backpack comes from props.glb
 const propsReady = loadProps('assets/models/props.glb');
+propsReady.catch(() => {}); // handled where it's used; without the models the simple furniture stays
 const AVATARS = [
   ['m1', 'Blue hoodie'],
   ['f1', 'Green tee'],
@@ -1027,6 +1046,7 @@ $('#charreset').addEventListener('click', () => {
 $$('#optq button').forEach((b) =>
   b.addEventListener('click', () => {
     quality = b.dataset.q;
+    resScale = 1;
     store.set('quality', quality);
     applyQuality();
     renderChar();
@@ -1249,9 +1269,11 @@ function frame() {
   fpsAcc += dt;
   fpsN++;
   if (fpsAcc > 0.5) {
-    $('#fps').textContent = Math.round(fpsN / fpsAcc) + ' fps';
+    const fps = fpsN / fpsAcc;
+    $('#fps').textContent = Math.round(fps) + ' fps' + (resScale < 1 ? ` · ${Math.round(resScale * 100)}% res` : '');
     fpsAcc = 0;
     fpsN = 0;
+    adaptResolution(fps);
   }
   grass.update(camera, t, QUALITY[quality].grass > 0 && indoorK < 0.99);
   // the floor under you reflects (indoors, standing on one of the building's floor levels)

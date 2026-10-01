@@ -329,6 +329,12 @@ def finish(name):
     bpy.ops.object.mode_set(mode='OBJECT')
     ob.select_set(False)
     parts = []
+    # each prop gets its own copy of its materials: the ambient occlusion baked below is per
+    # prop, and a shared material would carry one prop's AO onto all the others
+    for slot in ob.material_slots:
+        m = slot.material.copy()
+        m.name = f'{name}_{slot.material.name}'  # keeps the "_fixed" ending
+        slot.material = m
     log(name, len(ob.data.polygons), 'faces', [m.name for m in ob.data.materials])
     return ob
 
@@ -547,7 +553,7 @@ def clock():
     # the face keeps a planar UV over the dial (box_uv mapped it in meters)
     me = ob.data
     uv = me.uv_layers['UVMap']
-    fi = [i for i, m_ in enumerate(me.materials) if m_.name.startswith('clockFace')][0]
+    fi = [i for i, m_ in enumerate(me.materials) if 'clockFace' in m_.name][0]
     for p in me.polygons:
         if p.material_index == fi:
             for li in p.loop_indices:
@@ -618,6 +624,58 @@ def backpack():
     return finish('backpack')
 
 
+def fountain():
+    # hi-lo drinking fountain, wall mounted: two stainless bowls side by side at wheelchair
+    # and standing heights, each with a bubbler and a front push bar. Back on the wall at
+    # Blender y = 0, sticking out toward -Y (the game's +Z)
+    for (x0, x1, top) in ((-0.49, 0.0, 0.86), (0.0, 0.49, 1.02)):
+        box(x0 + 0.01, -0.46, top - 0.17, x1 - 0.01, 0.0, top, M['steel'], bevel=0.03, segs=3)  # bowl body
+        box(x0 + 0.06, -0.4, top - 0.04, x1 - 0.06, -0.06, top + 0.002, M['slot'], bevel=0.02, segs=2)  # basin
+        cx = (x0 + x1) / 2
+        cyl(cx + 0.1, -0.12, top - 0.04, top + 0.035, 0.014, M['chrome'], verts=10)  # bubbler
+        box(x0 + 0.05, -0.475, top - 0.12, x1 - 0.05, -0.455, top - 0.07, M['chrome'], bevel=0.008, segs=2)  # push bar
+        box(x0 + 0.04, -0.03, top - 0.42, x1 - 0.04, 0.0, top - 0.17, M['steel'])  # apron/wall plate
+    return finish('fountain')
+
+
+def trashcan():
+    # 32-gallon round utility can (gray plastic), with a black liner folded over the rim
+    M['grayPlastic'] = M.get('grayPlastic') or material('grayPlastic', 'Plastic010', color=(0.32, 0.33, 0.33), tile=0.4, normal=0.5, fixed=True)
+    cyl(0, 0, 0.0, 0.74, 0.245, M['grayPlastic'], verts=28, r1=0.28)
+    cyl(0, 0, 0.72, 0.78, 0.295, M['grayPlastic'], verts=28)  # rim
+    cyl(0, 0, 0.78, 0.785, 0.275, M['slot'], verts=28)  # the opening (dark inside)
+    cyl(0, 0, 0.66, 0.73, 0.284, M['blackPlastic'], verts=28, r1=0.29)  # liner over the rim
+    for k in range(4):  # venting channels down the side
+        a = k * math.pi / 2
+        box(math.cos(a) * 0.26 - 0.02, math.sin(a) * 0.26 - 0.02, 0.1, math.cos(a) * 0.26 + 0.02, math.sin(a) * 0.26 + 0.02, 0.66, M['grayPlastic'])
+    return finish('trashcan')
+
+
+def exit_sign():
+    # wall-mounted EXIT sign: white housing, red letters lit from inside
+    if 'exitRed' not in M:
+        m = material('exitRed', None, color=(0.8, 0.05, 0.03), rough=0.3, fixed=True)
+        b = m.node_tree.nodes['Principled BSDF']
+        b.inputs['Emission Color'].default_value = (1, 0.05, 0.03, 1)
+        b.inputs['Emission Strength'].default_value = 4.0
+        M['exitRed'] = m
+    box(-0.17, -0.06, -0.11, 0.17, 0.0, 0.11, M['trim'], bevel=0.01, segs=2)
+    bpy.ops.object.text_add(location=(0, -0.0605, 0.0))
+    t = bpy.context.object
+    t.data.body = 'EXIT'
+    t.data.size = 0.13
+    t.data.align_x = 'CENTER'
+    t.data.align_y = 'CENTER'
+    t.data.extrude = 0.002
+    t.rotation_euler = (math.pi / 2, 0, 0)
+    bpy.ops.object.convert(target='MESH')
+    t = bpy.context.object
+    t.data.materials.clear()
+    t.data.materials.append(M['exitRed'])
+    parts.append(t)
+    return finish('exitSign')
+
+
 # ------------------------------------------------------------------ AO bake
 def bake_ao(ob):
     me = ob.data
@@ -680,7 +738,7 @@ except Exception as e:  # noqa: BLE001
     scene.cycles.device = 'CPU'
 
 built = []
-for fn in (locker, desk, chair, stool, seat, round_table, clock, lambda: door(M['veneer'], 'doorWood'), lambda: door(M['paint'], 'doorSteel'), troffer, backpack):
+for fn in (locker, desk, chair, stool, seat, round_table, clock, lambda: door(M['veneer'], 'doorWood'), lambda: door(M['paint'], 'doorSteel'), troffer, backpack, fountain, trashcan, exit_sign):
     ob = fn()
     built.append(ob)
 x = 0

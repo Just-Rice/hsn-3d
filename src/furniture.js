@@ -643,6 +643,50 @@ export function buildFurniture(scene, world, info, T, M) {
     }
   }
 
+  // ---- hallway fixtures: a hi-lo drinking fountain and a trash can on either side of each
+  // restroom door, EXIT signs over the entrances. All are wall-mounted props from props.glb,
+  // backed against the wall with their front facing the hallway (local +z).
+  {
+    const g = (w, h, d, y0) => {
+      const geo = new THREE.BoxGeometry(w, h, d);
+      geo.translate(0, y0 + h / 2, d / 2);
+      return geo;
+    };
+    props.define('fountain', g(0.98, 0.45, 0.46, 0.6), std({ color: '#c9cdd1', roughness: 0.3, metalness: 0.8 }));
+    props.define('exitSign', g(0.34, 0.22, 0.06, -0.11), new THREE.MeshBasicMaterial({ color: '#ff3020' }));
+    const can = new THREE.CylinderGeometry(0.29, 0.26, 0.78, 20);
+    can.translate(0, 0.39, 0);
+    props.define('trashcan', can, std({ color: '#55585a', roughness: 0.7 }));
+  }
+  const wallRot = (axis, out) => (axis === 'z' ? (out > 0 ? 0 : Math.PI) : out > 0 ? Math.PI / 2 : -Math.PI / 2);
+  const along = (axis, c, t, off) => (axis === 'z' ? [t, c + off] : [c + off, t]);
+  for (const rm of info.rooms) {
+    if (rm.type !== 'lav') continue;
+    const y = baseOf(rm);
+    for (const d of rm.doorList) {
+      const blocked = doorsOnLine(rm.level, d.axis, d.c);
+      const free = (t, half) => !blocked.some(([a, b]) => t + half > a && t - half < b) && inLevel(rm.level, ...along(d.axis, d.c, t, d.out * 1.2)) && !inAnyRoom(rm.level, ...along(d.axis, d.c, t, d.out * 1.2));
+      const wallOff = d.out * (0.1 + 0.005); // the wall's hallway face
+      const tF = d.mid - d.width / 2 - 0.95, tC = d.mid + d.width / 2 + 0.85; // clear of the door's own keep-out (0.45 m)
+      if (free(tF, 0.5)) {
+        const [x, z] = along(d.axis, d.c, tF, wallOff);
+        props.add('fountain', x, y, z, wallRot(d.axis, d.out));
+        const [cx0, cz0] = along(d.axis, d.c, tF - 0.5, wallOff), [cx1, cz1] = along(d.axis, d.c, tF + 0.5, d.out * 0.6);
+        world.add(Math.min(cx0, cx1), y, Math.min(cz0, cz1), Math.max(cx0, cx1), y + 1.05, Math.max(cz0, cz1), 9);
+      }
+      if (free(tC, 0.32)) {
+        const [x, z] = along(d.axis, d.c, tC, d.out * 0.42);
+        props.add('trashcan', x, y, z, R() * Math.PI * 2);
+        world.add(x - 0.3, y, z - 0.3, x + 0.3, y + 0.8, z + 0.3, 9);
+      }
+    }
+  }
+  for (const e of info.entrances) {
+    // inside face of the wall over the opening (entrances are 3.0 m high, see building.js)
+    const [x, z] = along(e.axis, e.c, e.mid, -e.out * (0.1 + 0.005));
+    props.add('exitSign', x, 3.3, z, wallRot(e.axis, -e.out));
+  }
+
   // ---- gyms
   function courtLines(cx, cz, len, wid, y, alongZ) {
     const lines = B.get('paint');

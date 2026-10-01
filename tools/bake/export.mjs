@@ -26,6 +26,9 @@ const page = await browser.newPage({ viewport: { width: 640, height: 400 } });
 // keep the export independent of any existing bake and of saved settings
 await page.addInitScript(() => localStorage.setItem('wwpn3d:quality', '"low"'));
 await page.route('**/lightmaps/**', (r) => r.fulfill({ status: 404, body: '' }));
+// bake with the simple stand-in furniture and vehicles: the light doesn't need the detailed
+// models (assets/models), which would make the scene hundreds of MB
+await page.route('**/assets/models/**', (r) => r.fulfill({ status: 404, body: '' }));
 if (process.env.THREE_DIR) {
   await page.route('https://cdn.jsdelivr.net/npm/three@0.169.0/**', (r) => {
     const rel = new URL(r.request().url()).pathname.replace('/npm/three@0.169.0/', '');

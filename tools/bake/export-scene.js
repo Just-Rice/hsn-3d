@@ -49,6 +49,7 @@ async () => {
     if (!o.isMesh || !o.visible || skip.has(o)) return;
     const mat = Array.isArray(o.material) ? o.material[0] : o.material;
     if (!mat || !mat.isMeshStandardMaterial || mat.transparent || mat.opacity < 1) return;
+    if (o.geometry.isInstancedBufferGeometry) return; // grass blades follow the camera
     const geo = o.geometry, pos = geo.attributes.position;
     if (!geo.boundingBox) geo.computeBoundingBox();
     const inst = o.isInstancedMesh ? o.count : 1;

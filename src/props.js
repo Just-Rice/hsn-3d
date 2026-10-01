@@ -17,7 +17,7 @@ function patch(mat, tinted) {
     sh.uniforms.propFill = propFill;
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform vec3 propFill;')
-      .replace('#include <lights_fragment_maps>', '#include <lights_fragment_maps>\n  irradiance += propFill;');
+      .replace('#include <lights_fragment_maps>', '#include <lights_fragment_maps>\n  irradiance += propFill;\n  radiance += propFill * 0.3; // metals have no diffuse: give their reflections the fill too');
     if (!tinted) sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', '');
   };
   mat.customProgramCacheKey = () => (tinted ? 'prop' : 'prop-untinted');
