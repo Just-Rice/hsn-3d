@@ -1196,6 +1196,7 @@ function frame() {
     hudTimer = 0.2;
     locate();
     cullProps(furn.props, camera.position, indoorK > 0.5);
+    cullProps(info.propMeshes, camera.position, indoorK > 0.5);
   }
   const mc = $('#mini');
   drawMinimap(miniCtx, mc.width, maps, p.x, p.z, cam.yaw, player.yaw, navPath, player.level, navDest && navDest.lv === player.level ? navDest : null);

@@ -6,7 +6,7 @@ import { Batches, GeoBuilder, hexToRGB, inRect, WHITE } from './geo.js';
 import { rng, textTexture } from './textures.js';
 
 // ---------------------------------------------------------------- instanced props
-class Props {
+export class Props {
   constructor() {
     this.types = new Map();
   }

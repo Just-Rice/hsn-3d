@@ -114,6 +114,42 @@ def material(name, set_id=None, color=(1, 1, 1), rough=None, metal=0.0, tile=1.0
 MAT = {}
 
 
+def lens_material():
+    # prismatic acrylic lens: a fine grid of little pyramids, lit from behind; the emission
+    # is above 1 so the game's bloom picks it up
+    import numpy as np
+    S = 128
+    yy, xx = np.mgrid[0:S, 0:S] / 8.0
+    fx, fy = xx % 1 - 0.5, yy % 1 - 0.5
+    p = 1 - 2 * np.maximum(np.abs(fx), np.abs(fy))  # pyramid height 0..1
+    shade = 0.82 + 0.18 * p + 0.06 * np.sign(fx + fy) * (1 - p)
+    img = bpy.data.images.new('prism', S, S, alpha=False)
+    px = np.ones((S, S, 4), np.float32)
+    px[..., 0] = shade
+    px[..., 1] = shade * 0.985
+    px[..., 2] = shade * 0.955
+    img.pixels.foreach_set(px.ravel())
+    img.pack()
+    mat = bpy.data.materials.new('lens_fixed')
+    mat.use_nodes = True
+    nt = mat.node_tree
+    b = nt.nodes['Principled BSDF']
+    t = nt.nodes.new('ShaderNodeTexImage')
+    t.image = img
+    uv = nt.nodes.new('ShaderNodeUVMap')
+    uv.uv_map = 'UVMap'
+    mp = nt.nodes.new('ShaderNodeMapping')
+    mp.inputs['Scale'].default_value = (1 / 0.2, 1 / 0.2, 1)
+    nt.links.new(uv.outputs['UV'], mp.inputs['Vector'])
+    nt.links.new(mp.outputs['Vector'], t.inputs['Vector'])
+    nt.links.new(t.outputs['Color'], b.inputs['Base Color'])
+    nt.links.new(t.outputs['Color'], b.inputs['Emission Color'])
+    b.inputs['Emission Strength'].default_value = 3.0
+    b.inputs['Roughness'].default_value = 0.3
+    return mat
+
+
+
 def mats():
     M = MAT
     M['paint'] = material('paint', 'Plastic013A', color=(0.92, 0.92, 0.92), tile=0.3, normal=0.35)  # powder coat, tinted per instance
@@ -130,6 +166,13 @@ def mats():
     M['tabletop'] = material('tabletop', 'Plastic013A', color=(0.9, 0.87, 0.8), tile=0.6, normal=0.15, fixed=True)
     M['blueSeat'] = material('blueSeat', 'Plastic010', color=(0.07, 0.2, 0.62), tile=0.5, normal=0.4, fixed=True)
     M['armWood'] = material('armWood', 'Wood058', color=(0.55, 0.38, 0.24), tile=0.8, normal=0.3, fixed=True)
+    M['veneer'] = material('veneer', 'Wood058', color=(0.78, 0.56, 0.34), tile=1.6, normal=0.2, fixed=True)  # oak door
+    M['glass'] = material('glass', None, color=(0.6, 0.68, 0.7), rough=0.05, fixed=True)
+    g = M['glass']
+    g.node_tree.nodes['Principled BSDF'].inputs['Alpha'].default_value = 0.25
+    g.blend_method = 'BLEND'
+    M['trim'] = material('trim', 'Plastic013A', color=(0.93, 0.93, 0.92), tile=0.3, normal=0.2, fixed=True)
+    M['lens'] = lens_material()
 
 
 mats()
@@ -513,6 +556,51 @@ def clock():
     return ob
 
 
+DOOR_H = 12 * 0.1778  # 7 ft, as in src/layout.js
+
+
+def door(face, name):
+    # a classroom door leaf, 1 m wide (the game scales it to the opening), hinged on its
+    # x = 0 edge, 44 mm thick; narrow vision lite by the latch, lever handles, kick plates,
+    # three butt hinges and a closer on the room side
+    W, T = 1.0, 0.022
+    z0, z1 = 0.01, DOOR_H - 0.04
+    lx0, lx1, lz0, lz1 = 0.74, 0.86, 1.05, 1.85  # vision lite
+    box(0.004, -T, z0, W, T, lz0, face, bevel=0.002)
+    box(0.004, -T, lz1, W, T, z1, face, bevel=0.002)
+    box(0.004, -T, lz0, lx0, T, lz1, face)
+    box(lx1, -T, lz0, W, T, lz1, face)
+    box(lx0, -0.003, lz0, lx1, 0.003, lz1, M['glass'])
+    for sy in (-1, 1):
+        y = sy * (T + 0.002)
+        # stop/trim around the glass
+        for (a0, a1, b0, b1) in ((lx0 - 0.015, lx1 + 0.015, lz0 - 0.015, lz0), (lx0 - 0.015, lx1 + 0.015, lz1, lz1 + 0.015),
+                                 (lx0 - 0.015, lx0, lz0, lz1), (lx1, lx1 + 0.015, lz0, lz1)):
+            box(a0, min(y, sy * T), b0, a1, max(y, sy * T), b1, M['steel'])
+        # kick plate
+        box(0.03, min(y, sy * T), z0 + 0.02, W - 0.03, max(y, sy * T), z0 + 0.27, M['steel'], bevel=0.001)
+        # lever handle: rose and lever, pointing toward the hinge
+        rose_y0, rose_y1 = sorted((sy * T, sy * (T + 0.012)))
+        box(W - 0.09, rose_y0, 0.94, W - 0.05, rose_y1, 1.12, M['chrome'], bevel=0.006, segs=2)
+        straight_tube((W - 0.07, sy * (T + 0.012), 1.02), (W - 0.07, sy * (T + 0.06), 1.02), 0.009, M['chrome'])
+        straight_tube((W - 0.07, sy * (T + 0.06), 1.02), (W - 0.2, sy * (T + 0.065), 1.02), 0.01, M['chrome'])
+    for z in (0.25, DOOR_H / 2 + 0.1, DOOR_H - 0.3):
+        box(-0.006, -0.014, z - 0.06, 0.006, 0.014, z + 0.06, M['chrome'], bevel=0.002)
+    # closer on the room side (+y): body near the hinge, arm to the frame
+    box(0.08, T, z1 - 0.12, 0.38, T + 0.055, z1 - 0.06, M['paintDark'], bevel=0.008, segs=2)
+    straight_tube((0.36, T + 0.06, z1 - 0.07), (0.18, T + 0.08, z1 + 0.02), 0.008, M['paintDark'])
+    return finish(name)
+
+
+def troffer():
+    # 2x4 lay-in fixture: painted steel flange flush with the ceiling, prismatic lens
+    # recessed 1 cm; origin on the ceiling plane, hanging down (-Z), long side along Y
+    for (a0, a1, b0, b1) in ((-0.31, 0.31, -0.61, -0.585), (-0.31, 0.31, 0.585, 0.61), (-0.31, -0.285, -0.585, 0.585), (0.285, 0.31, -0.585, 0.585)):
+        box(a0, b0, -0.012, a1, b1, 0.0, M['trim'])
+    box(-0.286, -0.586, -0.004, 0.286, 0.586, -0.002, M['lens'])
+    return finish('troffer')
+
+
 # ------------------------------------------------------------------ AO bake
 def bake_ao(ob):
     me = ob.data
@@ -575,7 +663,7 @@ except Exception as e:  # noqa: BLE001
     scene.cycles.device = 'CPU'
 
 built = []
-for fn in (locker, desk, chair, stool, seat, round_table, clock):
+for fn in (locker, desk, chair, stool, seat, round_table, clock, lambda: door(M['veneer'], 'doorWood'), lambda: door(M['paint'], 'doorSteel'), troffer):
     ob = fn()
     built.append(ob)
 x = 0
