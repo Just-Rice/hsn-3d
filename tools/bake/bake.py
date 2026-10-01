@@ -51,7 +51,25 @@ def to_blender(p):  # three.js (x, y up, z) -> Blender (x, -z, z up)
 bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
 scene.render.engine = 'CYCLES'
+# Cycles on the GPU when there is one (Metal on Apple silicon, else CUDA/OptiX/HIP), else the CPU
 scene.cycles.device = 'CPU'
+try:
+    prefs = bpy.context.preferences.addons['cycles'].preferences
+    for kind in ('METAL', 'OPTIX', 'CUDA', 'HIP', 'ONEAPI'):
+        try:
+            prefs.compute_device_type = kind
+        except TypeError:
+            continue
+        prefs.get_devices()
+        gpus = [d for d in prefs.devices if d.type == kind]
+        if gpus:
+            for d in prefs.devices:
+                d.use = d.type == kind
+            scene.cycles.device = 'GPU'
+            break
+except Exception as e:  # noqa: BLE001 (the bpy module from PyPI has no add-on prefs)
+    print('no GPU, baking on the CPU:', e)
+print('Cycles device:', scene.cycles.device, flush=True)
 scene.cycles.samples = SAMPLES
 scene.cycles.max_bounces = 4
 scene.cycles.diffuse_bounces = 3

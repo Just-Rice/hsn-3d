@@ -6,7 +6,7 @@ import { Batches, GeoBuilder, hexToRGB, inRect, WHITE } from './geo.js';
 import { rng, textTexture } from './textures.js';
 
 // ---------------------------------------------------------------- instanced props
-class Props {
+export class Props {
   constructor() {
     this.types = new Map();
   }
@@ -16,14 +16,28 @@ class Props {
   add(name, x, y, z, rot = 0, color = null, scale = null) {
     this.types.get(name).items.push({ x, y, z, rot, color, scale });
   }
+  // One InstancedMesh per prototype per 24 m cell and floor, so the frustum and the distance
+  // cull in main.js (props.js) skip the furniture in rooms you can't see.
   finalize(scene) {
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(1, 1, 1), p = new THREE.Vector3();
     const up = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
+    const CELL = 24;
+    const chunks = [];
     for (const [name, t] of this.types) {
       if (!t.items.length) continue;
-      const mesh = new THREE.InstancedMesh(t.geometry, t.material, t.items.length);
+      const cells = new Map();
+      for (const it of t.items) {
+        const key = `${Math.floor(it.x / CELL)},${Math.floor(it.z / CELL)},${Math.round(it.y / 3)}`;
+        if (!cells.has(key)) cells.set(key, []);
+        cells.get(key).push(it);
+      }
+      for (const items of cells.values()) chunks.push({ name, t, items });
+    }
+    this.meshes = [];
+    for (const { name, t, items } of chunks) {
+      const mesh = new THREE.InstancedMesh(t.geometry, t.material, items.length);
       mesh.name = name;
-      t.items.forEach((it, i) => {
+      items.forEach((it, i) => {
         q.setFromAxisAngle(up, it.rot);
         p.set(it.x, it.y, it.z);
         if (it.scale) s.set(...it.scale);
@@ -33,10 +47,13 @@ class Props {
         if (it.color) mesh.setColorAt(i, col.set(it.color));
         else if (mesh.instanceColor || t.items.some((o) => o.color)) mesh.setColorAt(i, col.set('#ffffff'));
       });
-      mesh.castShadow = true;
+      // indoor furniture doesn't need sun shadows: the baked lighting and the props' own
+      // ambient occlusion already ground it, and the shadow map stays cheap
+      mesh.castShadow = false;
       mesh.receiveShadow = true;
       mesh.computeBoundingSphere();
       scene.add(mesh);
+      this.meshes.push(mesh);
     }
   }
 }
@@ -319,6 +336,78 @@ export function buildFurniture(scene, world, info, T, M) {
     props.define('clock', g, new THREE.MeshBasicMaterial({ map: clockTex }));
   }
 
+  // ---- the long science rooms (212-218): you come in at the short end through the door.
+  // Desks face the door wall (the whiteboard is there, beside the door), a square block
+  // pillar stands mid-room (building.js), and the far half is the lab: counters along both
+  // long walls and the far wall, a fume hood, and six lab stations, three off each side
+  // counter. A station is a black-topped lab table joined to the counter by a short section
+  // with a sink (labStation in props.glb), with stools around the table.
+  {
+    const g = new THREE.BoxGeometry(2.4, 0.92, 1.2);
+    g.translate(1.2, 0.46, 0);
+    props.define('labStation', g, std({ color: '#2a2a2a', roughness: 0.4 }));
+  }
+  const cabinet = C('#c9a77c'), epoxy = C('#141414');
+  function scienceRoom(rm, y) {
+    const f = frameOf(rm, rm.doorList[0] ? rm.doorList[0].side : 'S');
+    const col = chairColors[rm.idx % chairColors.length];
+    whiteboard(rm, f, y, Math.min(3.4, f.W / 2 - 1.2));
+    clock(f, y);
+    const mid = f.D / 2; // the pillar
+    // teacher's desk by the front wall, on the side away from the door
+    {
+      const tu = nearDoor(rm, ...f.at(f.W - 1.4, 1.2), 2.4) ? 1.4 : f.W - 1.4;
+      fbox(f, tu - 0.75, tu + 0.75, 0.9, 1.65, y, y + 0.76, C('#7a5634'), 'paint', true);
+      fbox(f, tu - 0.72, tu + 0.72, 0.87, 1.68, y + 0.76, y + 0.79, C('#3b3632'));
+      place('chair', f, tu, 2.0, y, Math.PI, '#444444');
+    }
+    // student desks in pairs, facing the door wall, up to the pillar
+    const pairW = 1.46, aisle = 1.0, dv = 1.5;
+    const np = Math.max(1, Math.floor((f.W - 1.0 + aisle) / (pairW + aisle)));
+    const su = (f.W - (np * pairW + (np - 1) * aisle)) / 2;
+    for (let i = 0; i < np; i++)
+      for (const k of [0, 1]) {
+        const u = su + i * (pairW + aisle) + 0.365 + k * 0.73;
+        for (let v = 2.8; v + 0.45 < mid - 1.1; v += dv) {
+          if (nearDoor(rm, ...f.at(u, v), 1.9)) continue;
+          place('desk', f, u, v, y);
+          place('chair', f, u, v + 0.45, y, (R() - 0.5) * 0.25, col);
+          deskCollider(f, u, v, y);
+        }
+      }
+    // the lab: counters (cabinets with a black top) along the long walls and the far wall
+    const v0 = mid + 1.3, v1 = f.D - 0.1, cd = 0.7;
+    for (const [ua, ub] of [[0.1, cd], [f.W - cd, f.W - 0.1]]) {
+      fbox(f, ua, ub, v0, v1, y, y + 0.88, cabinet, 'paint', true);
+      fbox(f, ua - 0.02, ub + 0.02, v0 - 0.02, v1, y + 0.88, y + 0.92, epoxy);
+    }
+    fbox(f, cd, f.W - cd, f.D - cd, v1, y, y + 0.88, cabinet, 'paint', true);
+    fbox(f, cd, f.W - cd, f.D - cd - 0.02, v1, y + 0.88, y + 0.92, epoxy);
+    // fume hood on the far counter, in the middle
+    fbox(f, f.W / 2 - 0.75, f.W / 2 + 0.75, f.D - cd, v1, y + 0.92, y + 2.35, C('#c9ced3'), 'paint', true);
+    fbox(f, f.W / 2 - 0.68, f.W / 2 + 0.68, f.D - cd - 0.01, f.D - cd + 0.01, y + 1.05, y + 1.85, C('#2a3b48'));
+    // six stations, three off each side counter; the table shortens in a narrower room so
+    // the aisle down the middle stays at least 1.2 m
+    const conn = 0.9, table = Math.max(1.0, Math.min(1.5, (f.W - 2 * cd - 1.2) / 2 - conn));
+    const sx = (conn + table) / 2.4; // the model is 2.4 m long
+    const step = (f.D - cd - 0.2 - v0) / 3; // stations between the pillar and the far counter
+    const [ox, oz] = f.at(0, 0), [ux, uz] = f.at(1, 0);
+    const rotU = Math.atan2(-(uz - oz), ux - ox); // a model's +x along the frame's +u
+    for (const side of [0, 1]) {
+      const sgn = side ? -1 : 1, u0 = side ? f.W - cd : cd;
+      for (let i = 0; i < 3; i++) {
+        const vc = v0 + step * (i + 0.5);
+        const [x, z] = f.at(u0, vc);
+        props.add('labStation', x, y, z, rotU + (side ? Math.PI : 0), null, [sx, 1, 1]);
+        fcollide(f, Math.min(u0, u0 + sgn * (conn + table)), Math.max(u0, u0 + sgn * (conn + table)), vc - 0.6, vc + 0.6, y, y + 0.92);
+        // stools along both sides of the table and one at its end
+        for (const t of [0.3, 0.75])
+          for (const dz of [-0.95, 0.95]) place('stool', f, u0 + sgn * (conn + table * t), vc + dz, y, 0, '#2b2b2b');
+        place('stool', f, u0 + sgn * (conn + table + 0.45), vc, y, 0, '#2b2b2b');
+      }
+    }
+  }
+
   // ---- per-room furnishing
   for (const rm of info.rooms) {
     const y = baseOf(rm);
@@ -329,6 +418,10 @@ export function buildFurniture(scene, world, info, T, M) {
     switch (rm.type) {
       case 'class':
       case 'music': {
+        if (rm.science) {
+          scienceRoom(rm, y);
+          break;
+        }
         const front = frontSide(rm);
         const f = frameOf(rm, front);
         whiteboard(rm, f, y, Math.min(3.8, f.W - 1.4));
@@ -626,6 +719,50 @@ export function buildFurniture(scene, world, info, T, M) {
     }
   }
 
+  // ---- hallway fixtures: a hi-lo drinking fountain and a trash can on either side of each
+  // restroom door, EXIT signs over the entrances. All are wall-mounted props from props.glb,
+  // backed against the wall with their front facing the hallway (local +z).
+  {
+    const g = (w, h, d, y0) => {
+      const geo = new THREE.BoxGeometry(w, h, d);
+      geo.translate(0, y0 + h / 2, d / 2);
+      return geo;
+    };
+    props.define('fountain', g(0.98, 0.45, 0.46, 0.6), std({ color: '#c9cdd1', roughness: 0.3, metalness: 0.8 }));
+    props.define('exitSign', g(0.34, 0.22, 0.06, -0.11), new THREE.MeshBasicMaterial({ color: '#ff3020' }));
+    const can = new THREE.CylinderGeometry(0.29, 0.26, 0.78, 20);
+    can.translate(0, 0.39, 0);
+    props.define('trashcan', can, std({ color: '#55585a', roughness: 0.7 }));
+  }
+  const wallRot = (axis, out) => (axis === 'z' ? (out > 0 ? 0 : Math.PI) : out > 0 ? Math.PI / 2 : -Math.PI / 2);
+  const along = (axis, c, t, off) => (axis === 'z' ? [t, c + off] : [c + off, t]);
+  for (const rm of info.rooms) {
+    if (rm.type !== 'lav') continue;
+    const y = baseOf(rm);
+    for (const d of rm.doorList) {
+      const blocked = doorsOnLine(rm.level, d.axis, d.c);
+      const free = (t, half) => !blocked.some(([a, b]) => t + half > a && t - half < b) && inLevel(rm.level, ...along(d.axis, d.c, t, d.out * 1.2)) && !inAnyRoom(rm.level, ...along(d.axis, d.c, t, d.out * 1.2));
+      const wallOff = d.out * (0.1 + 0.005); // the wall's hallway face
+      const tF = d.mid - d.width / 2 - 0.95, tC = d.mid + d.width / 2 + 0.85; // clear of the door's own keep-out (0.45 m)
+      if (free(tF, 0.5)) {
+        const [x, z] = along(d.axis, d.c, tF, wallOff);
+        props.add('fountain', x, y, z, wallRot(d.axis, d.out));
+        const [cx0, cz0] = along(d.axis, d.c, tF - 0.5, wallOff), [cx1, cz1] = along(d.axis, d.c, tF + 0.5, d.out * 0.6);
+        world.add(Math.min(cx0, cx1), y, Math.min(cz0, cz1), Math.max(cx0, cx1), y + 1.05, Math.max(cz0, cz1), 9);
+      }
+      if (free(tC, 0.32)) {
+        const [x, z] = along(d.axis, d.c, tC, d.out * 0.42);
+        props.add('trashcan', x, y, z, R() * Math.PI * 2);
+        world.add(x - 0.3, y, z - 0.3, x + 0.3, y + 0.8, z + 0.3, 9);
+      }
+    }
+  }
+  for (const e of info.entrances) {
+    // inside face of the wall over the opening (entrances are 3.0 m high, see building.js)
+    const [x, z] = along(e.axis, e.c, e.mid, -e.out * (0.1 + 0.005));
+    props.add('exitSign', x, 3.3, z, wallRot(e.axis, -e.out));
+  }
+
   // ---- gyms
   function courtLines(cx, cz, len, wid, y, alongZ) {
     const lines = B.get('paint');
@@ -821,4 +958,5 @@ export function buildFurniture(scene, world, info, T, M) {
   const materials = { paint: M.paint, wood: M.wood, books: std({ map: booksTexture(), roughness: 0.75 }) };
   for (const m of B.toMeshes(materials)) scene.add(m);
   props.finalize(scene);
+  return { props: props.meshes };
 }

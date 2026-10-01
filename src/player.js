@@ -1,13 +1,23 @@
 // Player character (customizable), movement physics and follow camera.
 import * as THREE from 'three';
 
+// avatar: which student (assets/models/people/student-<id>.glb); an empty color keeps that
+// student's own clothes
 export const DEFAULT_LOOK = {
+  avatar: 'm1',
+  shirt: '',
+  pants: '',
+  shoes: '',
+  pack: '#2a55b8',
+};
+// colors of the simple figure shown until the avatar loads
+const FIGURE = {
   skin: '#e0ac86',
   hair: '#3b2616',
   shirt: '#1f45a8',
   pants: '#2f3e5c',
   shoes: '#f2f2f2',
-  pack: '#aeb6c1',
+  pack: '#2a55b8',
 };
 
 export class Character {
@@ -15,7 +25,7 @@ export class Character {
     this.group = new THREE.Group();
     this.mats = {};
     const rough = { skin: 0.6, hair: 0.75, shirt: 0.85, pants: 0.9, shoes: 0.5, pack: 0.7 };
-    for (const k of Object.keys(DEFAULT_LOOK)) this.mats[k] = new THREE.MeshStandardMaterial({ color: look[k] || DEFAULT_LOOK[k], roughness: rough[k] });
+    for (const k of Object.keys(FIGURE)) this.mats[k] = new THREE.MeshStandardMaterial({ color: look[k] || FIGURE[k], roughness: rough[k] });
     const m = this.mats;
     const cap = (r, l, mat) => {
       const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(r, l, 4, 10), mat);
@@ -106,7 +116,7 @@ export class Character {
   }
 
   setLook(look) {
-    for (const k of Object.keys(this.mats)) if (look[k]) this.mats[k].color.set(look[k]);
+    for (const k of Object.keys(this.mats)) this.mats[k].color.set(look[k] || FIGURE[k]);
   }
 
   animate(dt, speed, grounded, sprint, swimming = false) {
@@ -195,18 +205,22 @@ export class Player {
     return null;
   }
 
-  // move: {x (strafe), z (forward)} in camera space, camYaw
-  update(dt, move, camYaw, sprint, jump) {
+  // move: {x (strafe), z (forward)} in camera space, camYaw. A jog by default, sprint with
+  // Shift, walk with Alt or a light push on the touch stick (speeds match the motion
+  // capture, see avatar.js)
+  update(dt, move, camYaw, sprint, jump, walk = false) {
     const w = this.world;
     const water = this.waterAt(this.pos.x, this.pos.z);
     this.swimming = !!water && this.pos.y < water.y - 1.0;
-    const maxSpeed = this.swimming ? (sprint ? 3.2 : 2.3) : sprint ? 7.6 : 4.3;
+    const maxSpeed = this.swimming ? (sprint ? 3.2 : 2.3) : sprint ? 5.6 : walk ? 1.4 : 3.4;
     // desired velocity in world space. camera looks along (-sin yaw, -cos yaw)
     const fx = -Math.sin(camYaw), fz = -Math.cos(camYaw);
     const rx = Math.cos(camYaw), rz = -Math.sin(camYaw);
     let dx = fx * move.z + rx * move.x, dz = fz * move.z + rz * move.x;
-    const len = Math.hypot(dx, dz);
-    if (len > 1) { dx /= len; dz /= len; }
+    let len = Math.hypot(dx, dz);
+    if (len > 1) { dx /= len; dz /= len; len = 1; }
+    // a half-pushed stick walks
+    if (!sprint && !walk && len > 0.05 && len < 0.6) { const f = (1.4 / 3.4) * Math.min(1, len / 0.45) / len; dx *= f; dz *= f; }
     // snappy on the ground (quick start, quicker stop), floaty in the air and water
     const accel = this.swimming ? 3.5 : this.grounded ? (len > 0.05 ? 16 : 24) : 3.2;
     const tx = dx * maxSpeed, tz = dz * maxSpeed;
@@ -309,7 +323,7 @@ export class Player {
     this.speed = Math.hypot(this.vel.x, this.vel.z);
     this.char.group.position.set(this.pos.x, this.visualY, this.pos.z);
     this.char.group.rotation.y = this.yaw;
-    this.char.animate(dt, this.speed, this.grounded, sprint, this.swimming);
+    this.char.animate(dt, this.speed, this.grounded, sprint, this.swimming, this.vel.y);
   }
 
   get level() {
@@ -337,7 +351,7 @@ export class FollowCamera {
   }
   update(dt, player) {
     // widen the view a little at a run
-    const fovT = 65 + Math.max(0, Math.min(1, (player.speed - 4.6) / 2.6)) * 7;
+    const fovT = 65 + Math.max(0, Math.min(1, (player.speed - 3.6) / 2)) * 7;
     if (Math.abs(this.cam.fov - fovT) > 0.05) {
       this.cam.fov += (fovT - this.cam.fov) * Math.min(1, dt * 5);
       this.cam.updateProjectionMatrix();
