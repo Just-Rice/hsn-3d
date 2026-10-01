@@ -557,7 +557,6 @@ export function buildBuilding(scene, world, T, M) {
   const jointCol = hexToRGB('#a89e92'); // sealant in the vertical control joints
   const winCol = hexToRGB('#e4e4df'); // white aluminum window frames
   const frameB = B.get('satin');
-  const glassB = B.get('glass');
   const outsideAll = (x, z) => !blockRects.some((br) => inRect(br.r, x, z));
   const faceOut = (axis, out, extra = '') => (axis === 'z' ? (out > 0 ? 'Z' : 'z') : out > 0 ? 'X' : 'x') + extra;
   for (const run of runs) {
@@ -600,7 +599,7 @@ export function buildBuilding(scene, world, T, M) {
     const { axis, c, out, a, b: bw, y0, y1, n } = w;
     const gc = c + out * SK * 0.55;
     B.get('extGlass').vquad(axis, gc + out * 0.004, a, bw, y0, y1, out);
-    glassB.vquad(axis, gc, a, bw, y0, y1, -out);
+    B.get('intGlass').vquad(axis, gc, a, bw, y0, y1, -out);
     segCollider(axis, c, a, bw, out * SK * 0.5, out * SK * 0.6, y0, y1, 15);
     const f0 = out * SK * 0.45, f1 = out * SK * 0.72;
     segBox(frameB, axis, c, a, a + 0.06, f0, f1, y0, y1, winCol);

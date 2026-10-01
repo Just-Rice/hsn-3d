@@ -24,13 +24,15 @@ export function makeMaterials(T) {
     metal: std({ color: '#a3aab1', roughness: 0.28, metalness: 0.9 }),
     glass: std({ color: '#b8cdd9', roughness: 0.03, metalness: 0.1, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide, envMapIntensity: 2.2 }),
     // outer face of exterior windows: from outside, rooms read darker than daylight, so the
-    // ribbon windows look dark as in the photos; the inner face stays clear glass
-    extGlass: std({ color: '#26323a', roughness: 0.06, metalness: 0.1, transparent: true, opacity: 0.72, depthWrite: false, envMapIntensity: 0.9 }),
+    // ribbon windows look dark as in the photos; the inner face (intGlass, one-sided too)
+    // stays clear glass
+    extGlass: std({ color: '#26323a', roughness: 0.06, metalness: 0.1, transparent: true, opacity: 0.86, depthWrite: false, envMapIntensity: 0.9 }),
+    intGlass: std({ color: '#b8cdd9', roughness: 0.03, metalness: 0.1, transparent: true, opacity: 0.22, depthWrite: false, envMapIntensity: 2.2 }),
     light: new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 3.1, 2.9) }),
     grass: std({ map: T.grass, normalMap: T.grassN, normalScale: n(0.7), roughness: 0.96 }),
     asphalt: std({ map: T.asphalt, normalMap: T.asphaltN, normalScale: n(0.6), roughness: 0.82 }),
   };
-  M.glass.userData.noShadow = true;
+  for (const k of ['glass', 'extGlass', 'intGlass']) M[k].userData.noShadow = true;
   M.light.userData.noShadow = true;
   return M;
 }
