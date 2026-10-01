@@ -11,6 +11,8 @@ async () => {
   for (const { r } of info.blockRects) { x0 = Math.min(x0, r[0]); z0 = Math.min(z0, r[1]); x1 = Math.max(x1, r[2]); z1 = Math.max(z1, r[3]); }
   const M = 25;
   const region = new THREE.Box3(new THREE.Vector3(x0 - M, -5, z0 - M), new THREE.Vector3(x1 + M, 40, z1 + M));
+  // furniture chunks culled by distance (props.js) still block light
+  scene.traverse((o) => { if (o.isInstancedMesh) o.visible = true; });
   const skip = new Set();
   g.player.char.group.traverse((o) => skip.add(o));
   for (const b of g.balls.list) skip.add(b.mesh);

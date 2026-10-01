@@ -1,5 +1,5 @@
 {
- "hash": "4f556ddb",
+ "hash": "40a0b55b",
  "pages": 5,
  "files": [
   "page0.jpg",
@@ -8,8 +8,8 @@
   "page3.jpg",
   "page4.jpg"
  ],
- "intensity": 2.910339882555312,
- "lmax": 0.926389956772328,
+ "intensity": 2.910311691538749,
+ "lmax": 0.9263809832930545,
  "weights": {
   "fixtures": 0.38,
   "sky": 1.0,
