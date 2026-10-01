@@ -3,7 +3,7 @@
 // entrances and room signs.
 import * as THREE from 'three';
 import {
-  BLOCKS, ROOMS, ENTRANCES, COURTYARD, PORCH, POOL, STAGE, LEVEL_H, SLAB, CEIL2, DOOR_H, hy,
+  BLOCKS, ROOMS, ENTRANCES, COURTYARD, POOL, STAGE, LEVEL_H, SLAB, CEIL2, DOOR_H, hy,
   rectW, wx, wz, ZONES,
 } from './layout.js';
 import { Batches, subtractRects, hexToRGB, inRect, WHITE } from './geo.js';
@@ -667,7 +667,8 @@ export function buildBuilding(scene, world, T, M) {
   }
 
   // ------------------------------------------------------------------ entrances (sliding glass doors)
-  const doorMat = new THREE.MeshStandardMaterial({ color: '#b9d2de', roughness: 0.03, metalness: 0.1, transparent: true, opacity: 0.3, depthWrite: false, envMapIntensity: 2 });
+  // tinted storefront glass: reads dark from outside, as on the photo of the entrance
+  const doorMat = new THREE.MeshStandardMaterial({ color: '#4a5a66', roughness: 0.04, metalness: 0.15, transparent: true, opacity: 0.55, depthWrite: false, envMapIntensity: 1.2 });
   const slidingDoors = [];
   for (const e of entrances) {
     const fb = B.get('frame');
@@ -712,51 +713,96 @@ export function buildBuilding(scene, world, T, M) {
   updateDoors(1e9, 1e9, 10);
 
   // ------------------------------------------------------------------ porch canopy (main entrance)
+  // Measured on a 2026 photo of the entrance (brick courses and the 0.72 m columns as rulers):
+  // a flat canopy with its soffit at 3.8 m, a white trim band, a brick fascia with a soldier
+  // course carrying the school name in white metal letters, and a light coping at about 5.4 m.
+  // Two rows of four round columns 3.75 m apart (a camera fit to the photo's seven columns);
+  // the back row stands against the 300s wing's south wall, its east column about 1.4 m in from
+  // the corner, and the front row is 4.4 m further out, so the canopy reaches about 9.6 m out
+  // from the doors. It is L-shaped: the east end stops at the 300s wall.
+  let canopy = null;
   {
-    // Measured on a 2026 photo of the entrance (brick courses as the ruler): a flat canopy
-    // with its soffit at 3.8 m, a white trim band, a brick fascia with a soldier course that
-    // carries the school name in white metal letters, a light coping at about 5.4 m, and
-    // round white columns about 0.72 m across in two rows.
-    const [x0, z0, x1, z1] = rectW(PORCH);
+    const main = entrances.find((e) => e.main);
+    const w300 = blocks.find((b) => b.id === 'w300').R[0];
+    const hallX = main.c, wallX = w300[0] - SK, w3z = w300[1];
+    const colR = 0.36, SPAN = 3.75, ROWS = 4.4;
+    const backX = wallX - colR - 0.03, frontX = backX - ROWS;
+    const colZ = [3, 2, 1, 0].map((k) => w3z + 1.4 - k * SPAN);
+    const x0 = frontX - 0.75, zW = colZ[0] - 1.0, zE = colZ[3] + 1.0;
+    const rects = [[x0, zW, hallX, w3z], [x0, w3z, wallX, zE]];
+    canopy = { rects, x0, z0: zW, z1: zE, cols: [] };
     const fy0 = 3.8, trim = fy0 + 0.2, sb0 = trim + 0.3, sb1 = sb0 + 0.36, fy1 = 5.3;
-    B.get('paint').box(x0, fy0, z0, x1 + SK, trim, z1, hexToRGB('#ebe8e1'), 'xzZy');
-    B.get('brick').box(x0, trim, z0, x1 + SK, fy1, z1, WHITE, 'xzZ');
-    B.get('soldier').box(x0 - 0.015, sb0, z0 - 0.015, x1 + SK, sb1, z1 + 0.015, WHITE, 'xzZyY');
-    B.get('paint').box(x0 - 0.04, fy1, z0 - 0.04, x1 + SK, fy1 + 0.12, z1 + 0.04, copeCol);
-    B.get('roof').box(x0 + 0.1, fy1, z0 + 0.1, x1, fy1 + 0.05, z1 - 0.1, WHITE, 'Y');
-    B.get('paint').hquad(x0 + 0.02, z0 + 0.02, x1, z1 - 0.02, fy0, false, hexToRGB('#e9e6de')); // soffit
-    world.add(x0, fy0, z0, x1 + SK, fy1, z1, 6);
-    const colR = 0.36;
+    const trimCol = hexToRGB('#ebe8e1');
+    // fascia layers on the exposed sides: front (x), the west end (z) and the bit of the back
+    // past the Main Hall's west wall, and the east end (Z) where it meets the 300s wall
+    const hallZ0 = blocks.find((b) => b.id === 'mainhall').R[0][1];
+    const fascia = (r, faces) => {
+      const [ax, az, bx, bz] = r;
+      B.get('paint').box(ax, fy0, az, bx, trim, bz, trimCol, faces);
+      B.get('brick').box(ax, trim, az, bx, fy1, bz, WHITE, faces);
+      B.get('soldier').box(ax - 0.015, sb0, az - (faces.includes('z') ? 0.015 : 0), bx, sb1, bz + (faces.includes('Z') ? 0.015 : 0), WHITE, faces + 'yY');
+    };
+    fascia(rects[0], 'xz');
+    fascia(rects[1], 'xZ');
+    if (zW < hallZ0) fascia([hallX - 0.3, zW, hallX, hallZ0], 'X');
+    for (const [ax, az, bx, bz] of rects) {
+      B.get('paint').box(ax - 0.04, fy1, az - 0.04, bx, fy1 + 0.12, bz + 0.04, copeCol);
+      B.get('roof').box(ax + 0.1, fy1, az + 0.1, bx - 0.05, fy1 + 0.05, bz - 0.1, WHITE, 'Y');
+      B.get('paint').hquad(ax + 0.02, az + 0.02, bx, bz, fy0, false, hexToRGB('#e9e6de')); // soffit
+      world.add(ax, fy0, az, bx, fy1, bz, 6);
+      B.get('concrete').hquad(ax, az, bx, bz, 0.05, true, hexToRGB('#dcd8cf'));
+    }
     const colGeo = new THREE.CylinderGeometry(colR, colR, fy0, 28);
     colGeo.translate(0, fy0 / 2, 0);
     const colMat = new THREE.MeshStandardMaterial({ color: '#f2f0ea', roughness: 0.45 });
-    const cols = [];
-    const nCol = 5;
-    for (let i = 0; i < nCol; i++) cols.push([x0 + 0.7, z0 + 0.7 + ((z1 - z0 - 1.4) * i) / (nCol - 1)]);
-    // back row near the building, flanking the doors
-    const main = entrances.find((e) => e.main);
-    if (main) for (const cz of [main.a - 1.1, main.b + 1.1]) if (cz > z0 + 0.6 && cz < z1 - 0.6) cols.push([x1 - 1.2, cz]);
-    for (const [cx, cz] of cols) {
-      const col = new THREE.Mesh(colGeo, colMat);
-      col.position.set(cx, 0, cz);
-      col.castShadow = col.receiveShadow = true;
-      scene.add(col);
-      B.get('paint').box(cx - colR - 0.02, 0, cz - colR - 0.02, cx + colR + 0.02, 0.1, cz + colR + 0.02, hexToRGB('#d8d4ca'));
-      world.add(cx - colR - 0.01, 0, cz - colR - 0.01, cx + colR + 0.01, fy0, cz + colR + 0.01, 8);
+    for (const cx of [frontX, backX])
+      for (const cz of colZ) {
+        const col = new THREE.Mesh(colGeo, colMat);
+        col.position.set(cx, 0, cz);
+        col.castShadow = col.receiveShadow = true;
+        scene.add(col);
+        canopy.cols.push([cx, cz]);
+        B.get('paint').box(cx - colR - 0.02, 0, cz - colR - 0.02, cx + colR + 0.02, 0.1, cz + colR + 0.02, hexToRGB('#d8d4ca'));
+        world.add(cx - colR - 0.01, 0, cz - colR - 0.01, cx + colR + 0.01, fy0, cz + colR + 0.01, 8);
+      }
+    // soffit panel joints (about 1.25 m panels), round downlights between and behind the rows,
+    // and two louvered vent grilles
+    const jointC = hexToRGB('#cfcbc2');
+    for (const [ax, az, bx, bz] of rects) {
+      for (let x = ax + 1.25; x < bx - 0.2; x += 1.25) B.get('paint').hquad(x - 0.012, az + 0.05, x + 0.012, bz - 0.05, fy0 - 0.004, false, jointC);
+      for (let z = az + 1.25; z < bz - 0.2; z += 1.25) B.get('paint').hquad(ax + 0.05, z - 0.012, bx - 0.05, z + 0.012, fy0 - 0.004, false, jointC);
     }
-    // round soffit downlights
-    for (let z = z0 + 2; z < z1 - 1; z += 3) for (const x of [x0 + 2.2, x1 - 2.4]) lightB.hquad(x - 0.12, z - 0.12, x + 0.12, z + 0.12, fy0 - 0.01, false);
-    B.get('concrete').hquad(x0 - 1.5, z0 - 1, x1, z1 + 1, 0.05, true, hexToRGB('#dcd8cf'));
-    // white metal letters (about 27 cm caps) on the soldier course, toward the end away
-    // from room 300, standing off the brick so they cast shadows
+    for (const [ax, az, bx, bz] of rects)
+      for (const x of [frontX + ROWS / 2, backX + 2.2])
+        if (x > ax + 0.5 && x < bx - 0.5) for (let z = az + 1.6; z < bz - 0.6; z += 3) lightB.hquad(x - 0.12, z - 0.12, x + 0.12, z + 0.12, fy0 - 0.01, false);
+    for (const z of [colZ[0] + SPAN / 2, colZ[2] + SPAN / 2]) {
+      B.get('paint').hquad(frontX + 0.9, z - 0.6, frontX + 1.5, z + 0.6, fy0 - 0.012, false, hexToRGB('#a9a69f'));
+      for (let k = 0; k < 7; k++) B.get('paint').hquad(frontX + 0.94, z - 0.56 + k * 0.165, frontX + 1.46, z - 0.5 + k * 0.165, fy0 - 0.016, false, hexToRGB('#77746e'));
+    }
+    // two slatted benches between the east pair of columns, and a bike rack beside them
+    const benchZ = colZ[3], wood = hexToRGB('#a39885'), steel = hexToRGB('#8f969c');
+    for (const [b0, b1] of [[frontX + colR + 0.35, frontX + colR + 2.15], [backX - colR - 2.15, backX - colR - 0.35]]) {
+      for (let k = 0; k < 4; k++) B.get('paint').box(b0, 0.42, benchZ - 0.28 + k * 0.145, b1, 0.46, benchZ - 0.17 + k * 0.145, wood);
+      for (const lx of [b0 + 0.15, b1 - 0.2]) B.get('satin').box(lx, 0, benchZ - 0.26, lx + 0.05, 0.42, benchZ + 0.26, steel);
+      world.add(b0, 0, benchZ - 0.3, b1, 0.46, benchZ + 0.3, 9);
+    }
+    const rz = colZ[3] - 1.9;
+    B.get('satin').box(frontX + 1.0, 0.04, rz - 0.4, frontX + 3.6, 0.08, rz - 0.36, steel);
+    B.get('satin').box(frontX + 1.0, 0.04, rz + 0.36, frontX + 3.6, 0.08, rz + 0.4, steel);
+    for (let k = 0; k <= 6; k++) {
+      const x = frontX + 1.05 + k * 0.42;
+      B.get('satin').box(x, 0.04, rz - 0.4, x + 0.04, 0.85, rz - 0.36, steel);
+      B.get('satin').box(x, 0.04, rz + 0.36, x + 0.04, 0.85, rz + 0.4, steel);
+      B.get('satin').box(x, 0.81, rz - 0.4, x + 0.04, 0.85, rz + 0.4, steel);
+    }
+    world.add(frontX + 1.0, 0, rz - 0.42, frontX + 3.65, 0.85, rz + 0.42, 9);
+    // white metal letters (about 23 cm caps) on the soldier course, starting near the west
+    // end as in the photo, standing off the brick so they cast shadows
     const tex = textTexture([{ text: 'WEST WINDSOR-PLAINSBORO HIGH SCHOOL NORTH', size: 0.7, font: 'Arial, Helvetica, sans-serif', weight: '700' }], { w: 2048, h: 110, bg: 'rgba(0,0,0,0)', fg: '#f4f2ec', border: false });
-    const sh = 0.68, sw = (sh * 2048) / 110;
-    const r300 = rooms.find((rm) => rm.label === '300');
-    const zm = (z0 + z1) / 2;
-    const shift = Math.max(0, Math.min(1.2, (z1 - z0 - sw * 0.8) / 2 - 0.3)) * (r300 && Math.abs(r300.cz - z0) < Math.abs(r300.cz - z1) ? 1 : -1);
+    const sw = 10.6, sh = (sw * 110) / 2048;
     const signMat = new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.5, roughness: 0.35, metalness: 0.3 });
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(sw, sh), signMat);
-    sign.position.set(x0 - 0.05, (sb0 + sb1) / 2, zm + shift);
+    sign.position.set(x0 - 0.05, (sb0 + sb1) / 2, zW + 0.3 + sw / 2);
     sign.rotation.y = -Math.PI / 2;
     sign.castShadow = true;
     scene.add(sign);
@@ -785,6 +831,6 @@ export function buildBuilding(scene, world, T, M) {
   return {
     rooms, stairs: stairInfo, blocks, blockRects, zones, entrances, mapWalls, water, poolPit, house, atlas, windows,
     courtyard: rectW(COURTYARD), level1Rects, slabRects, updateDoors, blockAt, materials, lightCenters,
-    lightmap, lightmapped,
+    lightmap, lightmapped, canopy,
   };
 }

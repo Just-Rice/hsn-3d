@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { Batches, GeoBuilder, hexToRGB, inRect, subtractRects, WHITE } from './geo.js';
 import { rng, makeStadiumTexture, makeParkingTexture, textTexture } from './textures.js';
-import { S, wx, wz, PORCH } from './layout.js';
+import { S, wx, wz } from './layout.js';
 
 const C = (h) => hexToRGB(h);
 const MX = 0.557, MY = 0.605; // meters per satellite pixel (east-west, north-south)
@@ -105,6 +105,9 @@ export function buildExterior(scene, world, info, T, M) {
 
   // ------------------------------------------------------------------ roads (traced)
   const GM_Y = 1040;
+  // bus lane centerline (satellite y): its north edge is 7.5 m out from the 300s wall, measured
+  // on the 2026 photo of the entrance (the satellite view agrees within a meter)
+  const LANE_Y = 898.7, LANE_W = 8.5;
   road([[-600, GM_Y], [1900, GM_Y]], 11, { center: true, edges: true });
   mapShapes.push({ kind: 'label', at: sat(150, GM_Y), text: 'GROVERS MILL ROAD', color: '#ffffff', rot: 0 });
   // west access road -> cul-de-sac by the field house
@@ -112,10 +115,10 @@ export function buildExterior(scene, world, info, T, M) {
   { const [cx, cz] = sat(287, 582); disc(B.get('asphalt'), cx, cz, 15, 0.03); mapShapes.push({ kind: 'disc', at: [cx, cz], r: 15, color: '#5b5e62' }); paved.push([[cx, cz], [cx, cz], 15]); }
   road([[309, 612], [296, 596]], 7.5);
   // road between the track and the west lot, up the west side, around the north of the building
-  road([[309, 668], [700, 668], [700, 505], [712, 490], [735, 484], [925, 484], [944, 494], [950, 512], [950, 598], [962, 606], [1058, 606], [1066, 620], [1066, 866], [1056, 886], [1034, 898], [962, 905]], 7);
+  road([[309, 668], [700, 668], [700, 505], [712, 490], [735, 484], [925, 484], [944, 494], [950, 512], [950, 598], [962, 606], [1058, 606], [1066, 620], [1066, 866], [1056, 886], [1034, 898], [962, LANE_Y]], 7);
   // bus lane along the south face, and the east entrance road
-  road([[962, 905], [309, 905]], 8.5);
-  road([[958, 905], [958, GM_Y]], 7.5);
+  road([[962, LANE_Y], [309, LANE_Y]], LANE_W);
+  road([[958, LANE_Y], [958, GM_Y]], 7.5);
   // drop-off lane inside the east loop
   road([[1066, 690], [1031, 702], [1031, 860], [1062, 878]], 5.5);
   // lot connectors
@@ -148,8 +151,10 @@ export function buildExterior(scene, world, info, T, M) {
   const westLot = [wlX0, wlZ0, wlX0 + 6 * 18, wlZ0 + 47 * 2.7];
   lotPlane(westLot, true);
   areas.push({ name: 'Student Parking', r: westLot });
-  const [slX0] = sat(0, 954);
-  const southLot = [slX0, sat(335, 0)[1], slX0 + 18, sat(335, 0)[1] + 128 * 2.7];
+  // the front lot starts at the bus lane's south curb (no lawn between them on the satellite
+  // view) and is two parking bands deep
+  const slX1 = sat(0, LANE_Y)[0] - LANE_W / 2 - 0.8;
+  const southLot = [slX1 - 2 * 18, sat(335, 0)[1], slX1, sat(335, 0)[1] + 128 * 2.7];
   lotPlane(southLot, true);
   areas.push({ name: 'Bus Parking', r: southLot });
   const [elX0] = sat(0, 813);
@@ -180,7 +185,10 @@ export function buildExterior(scene, world, info, T, M) {
   };
   fillLot(westLot, 6, 47, 0.35);
   fillLot(eastLot, 6, 39, 0.45);
-  for (let k = 40; k < 128; k++) if (R() < 0.55) cars.push({ x: southLot[0] + (R() < 0.5 ? 2.75 : 15.25), z: southLot[1] + 1.35 + k * 2.7, rot: Math.PI / 2 });
+  // cars in both bands, clear of the buses parked at the west end of the outer band
+  for (let b = 0; b < 2; b++)
+    for (let k = b === 0 ? 70 : 40; k < 128; k++)
+      for (const dx of [2.75, 15.25]) if (R() < 0.45) cars.push({ x: southLot[0] + b * 18 + dx, z: southLot[1] + 1.35 + k * 2.7, rot: dx < 9 ? Math.PI / 2 : -Math.PI / 2 });
   for (let i = 0; i < 5; i++) {
     const [x, z] = sat(930 + (i % 2) * 20, 680 + i * 16);
     cars.push({ x, z, rot: 0, truck: true });
@@ -221,7 +229,7 @@ export function buildExterior(scene, world, info, T, M) {
   // school buses: along the bus lane and parked in the south lot
   {
     const buses = [];
-    for (let i = 0; i < 4; i++) { const [x, z] = sat(470 + i * 30, 900); buses.push({ x, z, rot: 0 }); }
+    for (let i = 0; i < 4; i++) { const [x, z] = sat(470 + i * 30, LANE_Y); buses.push({ x, z, rot: 0 }); }
     for (let i = 0; i < 8; i++) { const [x, z] = sat(438 + i * 17, 958); buses.push({ x, z, rot: 0.45 }); }
     const g = new GeoBuilder();
     const Y = C('#f2b705'), K = C('#1a1a1a'), Wd = C('#22303b');
@@ -264,24 +272,32 @@ export function buildExterior(scene, world, info, T, M) {
   walk([[500, 668], [500, 648]], 3);
   walk([[712, 560], [728, 560]]);
   walk([[330, 668], [330, 1035]], 1.8);
-  // entrance plaza between the porch and the bus lane
+  // entrance walk: as wide as the canopy, from its front edge to the bus lane; lawn on either
+  // side (no planters), as in the 2026 photo of the entrance
+  const cn = info.canopy;
   {
-    const [px0, pz0, px1, pz1] = [wx(PORCH[0]), wz(PORCH[1]), wx(PORCH[2]), wz(PORCH[3])];
-    const [laneX] = sat(0, 899);
-    const plaza = [laneX, pz0 - 12, px0, pz1 + 12];
+    const laneX = sat(0, LANE_Y)[0] + LANE_W / 2;
+    const plaza = [laneX, cn.z0, cn.x0, cn.z1];
     flat('walk', plaza, 0.05, C('#dcd8cf'));
     mapShapes.push({ kind: 'rect', r: plaza, color: '#d6d1c6' });
-    // planters with shrubs flanking the plaza
-    for (const z of [pz0 - 9, pz1 + 9]) {
-      box('concrete', laneX + 2, 0, z - 1.6, px0 - 2, 0.55, z + 1.6, C('#c9c3b6'), true, 23);
-      B.get('grass').hquad(laneX + 2.2, z - 1.4, px0 - 2.2, z + 1.4, 0.56, true);
+    mapShapes.push(...cn.rects.map((r) => ({ kind: 'rect', r, color: '#d6d1c6' })));
+    avoid.push([laneX - 2, cn.z0 - 2, cn.rects[0][2], cn.z1 + 2]);
+    areas.push({ name: 'Front Entrance', r: [laneX - 6, cn.z0 - 18, cn.rects[0][2] + 1, cn.z1 + 18] });
+  }
+  // sidewalk along the north edge of the bus lane, from the west walk to the east end of the
+  // 300s wing (it shows as a light strip in front of the lawns on the satellite view)
+  {
+    const laneN = sat(0, LANE_Y)[0] + LANE_W / 2;
+    const zA = sat(597, 0)[1], zB = sat(935, 0)[1];
+    for (const [a, b] of [[zA, cn.z0], [cn.z1, zB]]) {
+      flat('walk', [laneN, a, laneN + 1.8, b], 0.045, C('#d9d5cb'));
+      paved.push([[laneN + 0.9, a], [laneN + 0.9, b], 0.9]);
+      mapShapes.push({ kind: 'rect', r: [laneN, a, laneN + 1.8, b], color: '#cfcac0' });
     }
-    avoid.push([laneX - 2, pz0 - 14, px1, pz1 + 14]);
-    areas.push({ name: 'Front Entrance', r: [laneX - 6, pz0 - 30, px1 + 1, pz1 + 30] });
   }
 
   // ------------------------------------------------------------------ flagpole + monument signs
-  const [fpX, fpZ] = sat(760, 893);
+  const [fpX, fpZ] = sat(760, 886); // on the lawn just north of the front sidewalk
   box('metal', fpX - 0.09, 0, fpZ - 0.09, fpX + 0.09, 13, fpZ + 0.09, WHITE, true);
   box('concrete', fpX - 1.2, 0, fpZ - 1.2, fpX + 1.2, 0.3, fpZ + 1.2, C('#cfc9bc'), true, 23);
   const flag = makeFlag();
@@ -636,7 +652,7 @@ export function buildExterior(scene, world, info, T, M) {
   // shrubs in mulch beds along the building's south face, as in the photos
   {
     const shrubs = [];
-    const porchZone = [wx(PORCH[0]) - 3, wz(PORCH[1]) - 13, wx(PORCH[2]), wz(PORCH[3]) + 13];
+    const porchZone = [cn.x0 - 3, cn.z0 - 0.4, 13.5, cn.z1 + 0.4];
     const bedOk = (x, z) => !inRect(porchZone, x, z) && !info.entrances.some((e) => Math.hypot(e.axis === 'x' ? e.c - x : 0, e.mid - z) < e.w);
     for (const { r } of info.blockRects) {
       if (r[0] > 12) continue;
@@ -691,10 +707,10 @@ export function buildExterior(scene, world, info, T, M) {
   areas.push({ name: 'Practice Fields', r: satRect(40, 30, 650, 478) });
   areas.push({ name: 'Woods', poly: woods });
   areas.push({ name: 'Grovers Mill Road', r: [sat(0, GM_Y + 12)[0], -1e4, sat(0, GM_Y - 12)[0], 1e4] });
-  areas.push({ name: 'Bus Loop', r: [sat(0, 912)[0], sat(300, 0)[1], sat(0, 898)[0], sat(970, 0)[1]] });
+  areas.push({ name: 'Bus Loop', r: [sat(0, LANE_Y + 7)[0], sat(300, 0)[1], sat(0, LANE_Y - 7)[0], sat(970, 0)[1]] });
   const areaAt = (x, z) => areas.find((a) => (a.r ? inRect(a.r, x, z) : inPoly(a.poly, x, z)))?.name || 'Campus Grounds';
 
-  const [spX, spZ] = [sat(0, 899)[0] + 3, wz(782)];
+  const [spX, spZ] = [sat(0, LANE_Y)[0] + LANE_W / 2 + 1.0, wz(782)];
   return { flag, flagPos: [fpX, fpZ], stadium, lots: { westLot, eastLot, southLot, yard }, mapShapes, woods, areaAt, spawn: [spX, spZ], cars, boxCars, trees, treeMeshes };
 }
 

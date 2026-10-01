@@ -348,7 +348,7 @@ async function build() {
       const [x, z] = sat(sx, sy);
       balls.add('soccer', x, 0.02, z);
     }
-    balls.add('soccer', ext.spawn[0] + 1.5, 0.05, ext.spawn[1] - 4);
+    balls.add('soccer', ext.spawn[0] - 0.3, 0.05, ext.spawn[1] - 2.5); // on the walk, between the canopy's columns
   }
   initPathViz();
   applyQuality();
