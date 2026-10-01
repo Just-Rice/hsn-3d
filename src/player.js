@@ -100,6 +100,9 @@ export class Character {
     pack.castShadow = true;
     this.hips.add(pack);
     this.phase = 0;
+    // the parts are modeled 1.95 m to the top of the hair; scale to 5'7" (1.70 m), the
+    // average height at the school
+    this.group.scale.setScalar(1.7 / 1.954);
   }
 
   setLook(look) {
@@ -162,7 +165,7 @@ export class Player {
     this.vel = new THREE.Vector3();
     this.yaw = 0; // character facing
     this.radius = 0.3;
-    this.height = 1.75;
+    this.height = 1.7;
     this.step = 0.5;
     this.grounded = true;
     this.swimming = false;
@@ -339,9 +342,9 @@ export class FollowCamera {
       this.cam.fov += (fovT - this.cam.fov) * Math.min(1, dt * 5);
       this.cam.updateProjectionMatrix();
     }
-    let eyeH = this.firstPerson ? 1.62 : 1.5;
+    let eyeH = this.firstPerson ? 1.56 : 1.46; // a 1.70 m person's eyes are at about 1.58 m
     if (this.firstPerson && player.grounded && player.speed > 0.3) eyeH += Math.abs(Math.sin(player.char.phase)) * 0.035 * Math.min(1, player.speed / 4) - 0.017;
-    if (player.swimming) eyeH = 1.45;
+    if (player.swimming) eyeH = 1.41;
     eyeH -= player.landing;
     this.target.set(player.pos.x, player.visualY + eyeH, player.pos.z);
     const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);

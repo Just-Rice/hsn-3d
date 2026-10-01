@@ -209,9 +209,9 @@ export function makeTextures() {
     }, 3));
   }
 
-  // --- Painted cinder block (interior walls), 2.4 m tile: 40 x 20 cm units, white so
-  // vertex colors tint the paint. Paint fills but doesn't hide the porous face, and the
-  // joints are concave.
+  // --- Painted cinder block (interior walls), 12-course tile: 7 in courses (17.78 cm, as at the
+  // school) and 14 in units, white so vertex colors tint the paint. Paint fills but doesn't hide
+  // the porous face, and the joints are concave.
   {
     const S = 1024, rows = 12, cols = 6, bh = S / rows, bw = S / cols;
     const joints = (g, col, lw) => {
@@ -235,7 +235,7 @@ export function makeTextures() {
         g.fill();
       }
     };
-    put('block', surface(S, 2.4, (g) => {
+    put('block', surface(S, 12 * 0.1778, (g) => {
       g.fillStyle = '#f3f0e8';
       g.fillRect(0, 0, S, S);
       // slight unit-to-unit variation under the paint

@@ -1,12 +1,12 @@
 {
- "hash": "d97b328f",
+ "hash": "ecfd364f",
  "pages": 2,
  "files": [
   "page0.jpg",
   "page1.jpg"
  ],
- "intensity": 2.764474052966586,
- "lmax": 0.8799594211578365,
+ "intensity": 2.8928589945890155,
+ "lmax": 0.9208256173133847,
  "weights": {
   "fixtures": 0.38,
   "sky": 1.0,

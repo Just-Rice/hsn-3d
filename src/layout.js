@@ -13,10 +13,15 @@ export const S = 0.18; // meters per plan unit
 const OX = 180;
 const OY = 200;
 
-export const LEVEL_H = 4.4; // floor-to-floor height: the second floor lines up with the one-story roofs
+// Inside walls are concrete block laid in 7 in (17.78 cm) courses. Classrooms and hallways are
+// 23 courses floor to ceiling (4.09 m), as counted at the school; heights below are whole courses
+// so the block lines up with floors, ceilings and door heads.
+export const CMU = 0.1778;
+const CEIL = 23 * CMU;
+export const LEVEL_H = 27 * CMU; // 4.80 m floor to floor in the two-story wing
 export const SLAB = 0.3;
-export const CEIL2 = [3.4, 7.8]; // ceilings on level 0 and level 1 in the two-story wing
-export const DOOR_H = 2.2;
+export const CEIL2 = [CEIL, LEVEL_H + CEIL]; // ceilings on level 0 and level 1 in the two-story wing
+export const DOOR_H = 12 * CMU; // 7 ft doors
 
 export const wx = (px) => (px - OX) * S;
 export const wz = (py) => (py - OY) * S;
@@ -28,29 +33,29 @@ export const rectW = (r) => [wx(r[0]), wz(r[1]), wx(r[2]), wz(r[3])];
 // ---------------------------------------------------------------------------------------
 export const BLOCKS = [
   {
-    id: 'acad', name: 'Academic Wing', levels: 2, roof: 8.8,
+    id: 'acad', name: 'Academic Wing', levels: 2, roof: 9.4,
     rects: [
       [290, 208, 752, 345], [290, 345, 375, 402], [665, 345, 752, 402],
       [290, 402, 752, 630], [290, 630, 431, 750], [606, 630, 752, 750],
     ],
   },
-  { id: 'mc', name: 'Media Center', levels: 1, ceil: 3.8, roof: 4.8, rects: [[431, 630, 606, 750]] },
-  { id: 'office', name: 'Main Office', levels: 1, ceil: 3.3, roof: 4.4, rects: [[250, 455, 290, 750]] },
-  { id: 'mainhall', name: 'Main Hall', levels: 1, ceil: 4.4, roof: 5.4, rects: [[238, 750, 1000, 798]] },
-  { id: 'w300', name: '300s', levels: 1, ceil: 3.3, roof: 4.4, rects: [[217, 798, 363, 1175]] },
+  { id: 'mc', name: 'Media Center', levels: 1, ceil: CEIL, roof: 4.6, rects: [[431, 630, 606, 750]] },
+  { id: 'office', name: 'Main Office', levels: 1, ceil: CEIL, roof: 4.6, rects: [[250, 455, 290, 750]] },
+  { id: 'mainhall', name: 'Main Hall', levels: 1, ceil: CEIL, roof: 4.6, rects: [[238, 750, 1000, 798]] },
+  { id: 'w300', name: '300s', levels: 1, ceil: CEIL, roof: 4.6, rects: [[217, 798, 363, 1175]] },
   { id: 'theatre', name: 'Theatre', levels: 1, ceil: 10, roof: 11, windows: false, rects: [[363, 798, 526, 990]] },
   { id: 'stage', name: 'Stage', levels: 1, ceil: 15, roof: 16, windows: false, rects: [[363, 990, 526, 1100]] },
   { id: 'backstage', name: 'Backstage', levels: 1, ceil: 4.5, roof: 5.5, rects: [[363, 1100, 526, 1175]] },
-  { id: 'e300', name: '300s', levels: 1, ceil: 3.3, roof: 4.4, rects: [[526, 798, 621, 1183]] },
+  { id: 'e300', name: '300s', levels: 1, ceil: CEIL, roof: 4.6, rects: [[526, 798, 621, 1183]] },
   { id: 'dining', name: 'Dining Halls', levels: 1, ceil: 5.5, roof: 6.5, rects: [[661, 798, 771, 990], [876, 798, 988, 967]] },
-  { id: 'kitchen', name: 'Kitchen', levels: 1, ceil: 3.3, roof: 4.4, rects: [[771, 798, 876, 967], [771, 967, 929, 990], [732, 990, 929, 1105]] },
-  { id: 'connector', name: 'Gym Connector', levels: 1, ceil: 3.2, roof: 4.2, rects: [[988, 826, 1027, 862]] },
+  { id: 'kitchen', name: 'Kitchen', levels: 1, ceil: CEIL, roof: 4.6, rects: [[771, 798, 876, 967], [771, 967, 929, 990], [732, 990, 929, 1105]] },
+  { id: 'connector', name: 'Gym Connector', levels: 1, ceil: CEIL, roof: 4.6, rects: [[988, 826, 1027, 862]] },
   { id: 'pool', name: 'Natatorium', levels: 1, ceil: 8.5, roof: 9.5, windows: false, rects: [[752, 576, 962, 750]] },
-  { id: 'lockers', name: 'Locker Rooms', levels: 1, ceil: 3.3, roof: 4.4, rects: [[962, 527, 1128, 750], [1128, 600, 1332, 750]] },
-  { id: 'eastcorr', name: 'Gym Hallway', levels: 1, ceil: 3.3, roof: 4.4, rects: [[1000, 750, 1360, 778]] },
-  { id: 'r400', name: '400s', levels: 1, ceil: 3.3, roof: 4.4, rects: [[1332, 600, 1456, 750], [1360, 750, 1456, 1026]] },
+  { id: 'lockers', name: 'Locker Rooms', levels: 1, ceil: CEIL, roof: 4.6, rects: [[962, 527, 1128, 750], [1128, 600, 1332, 750]] },
+  { id: 'eastcorr', name: 'Gym Hallway', levels: 1, ceil: CEIL, roof: 4.6, rects: [[1000, 750, 1360, 778]] },
+  { id: 'r400', name: '400s', levels: 1, ceil: CEIL, roof: 4.6, rects: [[1332, 600, 1456, 750], [1360, 750, 1456, 1026]] },
   { id: 'mgym', name: 'Main Gym', levels: 1, ceil: 9.5, roof: 10.5, windows: false, rects: [[1027, 778, 1241, 1026]] },
-  { id: 'gymside', name: 'Gym Hallway', levels: 1, ceil: 3.3, roof: 4.4, rects: [[1241, 778, 1360, 1026], [1027, 1026, 1380, 1059], [1260, 1059, 1380, 1110]] },
+  { id: 'gymside', name: 'Gym Hallway', levels: 1, ceil: CEIL, roof: 4.6, rects: [[1241, 778, 1360, 1026], [1027, 1026, 1380, 1059], [1260, 1059, 1380, 1110]] },
   { id: 'sgym', name: 'Auxiliary Gym', levels: 1, ceil: 8.0, roof: 9.0, windows: false, rects: [[1045, 1059, 1260, 1220]] },
 ];
 

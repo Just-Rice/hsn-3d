@@ -12,7 +12,7 @@ import { packLightmaps } from './lightmap.js';
 
 const WT = 0.2; // interior wall thickness
 const SK = 0.32; // exterior brick skin thickness
-const PARAPET = 0.6; // one-story walls come out 5.0 m to the top of the coping, as measured
+const PARAPET = 0.4; // with 4.6 m roof decks, one-story walls come out 5.0 m to the top of the coping, as measured
 const L1_TOP = CEIL2[1] + 0.05;
 const EPS = 0.06;
 // Window sill/head per level. Photos of the 300s wing show high ribbon windows: white
