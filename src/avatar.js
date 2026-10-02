@@ -85,9 +85,9 @@ export class Avatar {
     this.tint = {
       clothMask: { value: mask },
       clothLum: { value: new THREE.Vector3(lin(stats.shirt), lin(stats.pants), lin(stats.shoes)) },
-      tintShirt: { value: new THREE.Vector4() },
-      tintPants: { value: new THREE.Vector4() },
-      tintShoes: { value: new THREE.Vector4() },
+      tintShirt: { value: new THREE.Vector4(0, 0, 0, 0) }, // w = 0: keep the original colors until setLook
+      tintPants: { value: new THREE.Vector4(0, 0, 0, 0) },
+      tintShoes: { value: new THREE.Vector4(0, 0, 0, 0) },
     };
     const U = this.tint;
     mat.onBeforeCompile = (sh) => {
