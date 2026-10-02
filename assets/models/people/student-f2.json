@@ -5,15 +5,15 @@
   "lfoot": 0.969
  },
  "idle": {
-  "duration": 4.9
+  "duration": 4.0
  },
  "run": {
-  "speed": 3.029,
+  "speed": 3.041,
   "duration": 0.7666666666666667,
-  "lfoot": 0.696
+  "lfoot": 0.652
  },
  "sprint": {
-  "speed": 4.07,
+  "speed": 4.078,
   "duration": 0.6666666666666666,
   "lfoot": 0.1
  },
@@ -24,9 +24,9 @@
   "land": 1.2333333333333334
  },
  "swim": {
-  "speed": 0.222,
-  "duration": 0.8,
-  "hips": 0.826
+  "speed": 0.231,
+  "duration": 0.8333333333333334,
+  "hips": 0.8
  },
  "clothing": {
   "shirt": 0.1184,

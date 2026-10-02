@@ -8,12 +8,12 @@
   "duration": 4.0
  },
  "run": {
-  "speed": 2.923,
+  "speed": 2.928,
   "duration": 0.7666666666666667,
   "lfoot": 0.652
  },
  "sprint": {
-  "speed": 3.918,
+  "speed": 3.926,
   "duration": 0.6666666666666666,
   "lfoot": 0.1
  },
@@ -24,9 +24,9 @@
   "land": 1.2333333333333334
  },
  "swim": {
-  "speed": 0.214,
-  "duration": 0.8,
-  "hips": 0.795
+  "speed": 0.222,
+  "duration": 0.8333333333333334,
+  "hips": 0.77
  },
  "clothing": {
   "shirt": 0.2184,

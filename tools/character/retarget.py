@@ -13,9 +13,11 @@ positions that mean the same thing on both skeletons (the bone's direction to it
 plus the body's left-right or front-back axis). Rotating the source frame by the source
 joint's world delta and expressing the target bone in that frame cancels out any difference
 between the two rest poses (Rocketbox stands in an A-pose; the Bandai skeleton's rest pose
-has every limb along one axis). The pelvis also gets the source's hip translation, scaled
-by leg length. Each clip is then cut to a seamless loop (where it loops), made in-place, and
-resampled to 30 fps.
+has every limb along one axis). Knees and elbows use their hinge axes as the secondary axis,
+so they bend in the avatar's own hinge plane (see HINGES). The pelvis also gets the source's
+hip translation (of the point between the hip joints), scaled by leg length. Each clip is
+then cut to a seamless loop (where it loops), made in-place, set down so the feet meet the
+floor, and resampled to 30 fps.
 """
 import math
 import os
@@ -47,17 +49,27 @@ TGT = dict(hips='Bip01 Pelvis', spine='Bip01 Spine', chest='Bip01 Spine2', neck=
            thighL='Bip01 L Thigh', calfL='Bip01 L Calf', footL='Bip01 L Foot', toeL='Bip01 L Toe0',
            thighR='Bip01 R Thigh', calfR='Bip01 R Calf', footR='Bip01 R Foot', toeR='Bip01 R Toe0')
 # the bone's primary axis runs from joint a to joint b; the secondary axis is the body's
-# lateral ('lat', hips or shoulders) or forward ('fwd') direction at rest
+# lateral ('lat', hips or shoulders) or forward ('fwd') direction at rest, or for the bones
+# on either side of a knee or elbow, that joint's hinge axis (see HINGES)
 FRAMES = dict(
     # the torso, neck and head use the body's up axis: both reference poses stand upright,
     # but the spine and neck curve differently on the two skeletons
     hips=('hips', 'neck', 'latH'), spine=('hips', 'neck', 'latS'), chest=('hips', 'neck', 'latS'),
     neck=('hips', 'neck', 'latS'), head=('hips', 'neck', 'latS'),
-    clavL=('clavL', 'armL', 'fwd'), armL=('armL', 'foreL', 'fwd'), foreL=('foreL', 'handL', 'fwd'), handL=('foreL', 'handL', 'fwd'),
-    clavR=('clavR', 'armR', 'fwd'), armR=('armR', 'foreR', 'fwd'), foreR=('foreR', 'handR', 'fwd'), handR=('foreR', 'handR', 'fwd'),
-    thighL=('thighL', 'calfL', 'latH'), calfL=('calfL', 'footL', 'latH'), footL=('footL', 'toeL', 'latH'), toeL=('footL', 'toeL', 'latH'),
-    thighR=('thighR', 'calfR', 'latH'), calfR=('calfR', 'footR', 'latH'), footR=('footR', 'toeR', 'latH'), toeR=('footR', 'toeR', 'latH'),
+    clavL=('clavL', 'armL', 'fwd'), armL=('armL', 'foreL', 'elbowL'), foreL=('foreL', 'handL', 'elbowL'), handL=('foreL', 'handL', 'fwd'),
+    clavR=('clavR', 'armR', 'fwd'), armR=('armR', 'foreR', 'elbowR'), foreR=('foreR', 'handR', 'elbowR'), handR=('foreR', 'handR', 'fwd'),
+    thighL=('thighL', 'calfL', 'kneeL'), calfL=('calfL', 'footL', 'kneeL'), footL=('footL', 'toeL', 'latH'), toeL=('footL', 'toeL', 'latH'),
+    thighR=('thighR', 'calfR', 'kneeR'), calfR=('calfR', 'footR', 'kneeR'), footR=('footR', 'toeR', 'latH'), toeR=('footR', 'toeR', 'latH'),
 )
+# Knees and elbows are hinges, but which way a hinge faces relative to the hips or shoulders
+# differs between skeletons (Rocketbox's knees turn out about 16 degrees from its hips'
+# lateral axis, the mocap actors' by 3 to 6). Lining the limbs up by the lateral axis bent
+# the avatar's knees and elbows off their own hinges, sideways through the mesh. Instead the
+# hinge axes themselves are matched: the avatar's from its skeleton (T_hinge), the source's
+# measured from the clip, where it bends them. Joint -> (upper, lower, end, fallback
+# secondary axis when a clip never bends that joint enough to measure it).
+HINGES = dict(kneeL=('thighL', 'calfL', 'footL', 'latH'), kneeR=('thighR', 'calfR', 'footR', 'latH'),
+              elbowL=('armL', 'foreL', 'handL', 'fwd'), elbowR=('armR', 'foreR', 'handR', 'fwd'))
 
 # clip name -> (file, skeleton, start s, end s (None = to the end), loop?, notes)
 CLIPS = {
@@ -97,13 +109,16 @@ T_rest = {b.name: b.matrix_local.copy() for b in tb}
 T_head = {k: tb[v].head_local.copy() for k, v in TGT.items()}
 
 
-def semantic_frames(J):
-    """J: semantic joint -> rest position. Returns semantic bone -> 3x3 frame (columns)."""
+def semantic_frames(J, hinge):
+    """J: semantic joint -> rest position; hinge: knee/elbow -> its hinge axis at rest (a
+    missing one falls back to HINGES' axis). Returns semantic bone -> 3x3 frame (columns)."""
     up = (J['neck'] - J['hips']).normalized()
     latS = (J['armR'] - J['armL']).normalized()
     latH = (J['thighR'] - J['thighL']).normalized()
     fwd = latS.cross(up).normalized()
     sec = dict(latS=latS, latH=latH, fwd=fwd)
+    for h, (_, _, _, fallback) in HINGES.items():
+        sec[h] = hinge[h] if h in hinge else sec[fallback]
     out = {}
     for k, (a, b, s) in FRAMES.items():
         p = (J[b] - J[a]).normalized()
@@ -113,7 +128,27 @@ def semantic_frames(J):
     return out
 
 
-T_frames = semantic_frames(T_head)
+def bend_axis(a, b, c):
+    """Hinge axis of the joint at b, from joint positions a-b-c (the flexion direction)."""
+    return (b - a).cross(c - b).normalized()
+
+
+# The avatar's hinges: a Biped calf or forearm turns about its own local Z axis. Signed so
+# that bending moves the shin back and the forearm forward (forward is where the toes point);
+# where the rest pose is bent (the male avatars' knees by 7 degrees, all elbows by 21-23)
+# that is checked against the bend itself.
+_fwd = sum((T_head['toe' + s] - T_head['foot' + s] for s in 'LR'), Vector())
+_fwd.z = 0
+_fwd.normalize()
+T_hinge = {}
+for h, (a, b, c, _) in HINGES.items():
+    z = T_rest[TGT[b]].to_3x3().col[2].normalized()
+    flex = -_fwd if h.startswith('knee') else _fwd
+    if z.dot((T_head[b] - T_head[a]).cross(flex)) < 0:
+        z = -z
+    if (T_head[b] - T_head[a]).angle(T_head[c] - T_head[b]) > math.radians(3):
+        assert z.angle(bend_axis(T_head[a], T_head[b], T_head[c])) < math.radians(5), f'{h}: rest bend is off its local Z'
+    T_hinge[h] = z
 tgt_leg = (T_head['thighL'] - T_head['calfL']).length + (T_head['calfL'] - T_head['footL']).length
 order = []  # target bones, parents first
 
@@ -162,20 +197,34 @@ def sample_clip(name, file, kind, t0, t1):
     else:
         J = {k: m.translation.copy() for k, m in rest.items()}
         S_rest_rot = {k: m.to_quaternion() for k, m in rest.items()}
-    S_frames = semantic_frames(J)
+    n_src = f1 - f0 + 1
+    step = 1.0 / (ft * FPS)  # source frames per output frame
+    first = f0 + int(round(t0 / ft))
+    last = f1 if t1 is None else min(f1, f0 + int(round(t1 / ft)))
+    sc = bpy.context.scene
+    # The source's hinge axes, measured where the clip bends them: the bend axis is fixed in
+    # the upper bone's frame (a mocap knee or elbow is a clean hinge), carried to the rest pose
+    hinge, axes = {}, {h: [] for h in HINGES}
+    for fi in range(first, last + 1, 2):
+        sc.frame_set(fi)
+        m = {key: src.matrix_world @ src.pose.bones[SRC[key]].matrix for key in SRC}
+        for h, (a, b, c, _) in HINGES.items():
+            pa, pb, pc = m[a].translation, m[b].translation, m[c].translation
+            if (pb - pa).angle(pc - pb) > math.radians(8):
+                axes[h].append(m[a].to_quaternion().inverted() @ bend_axis(pa, pb, pc))
+    for h, v in axes.items():
+        if len(v) >= 5:
+            hinge[h] = (S_rest_rot[HINGES[h][0]] @ sum(v, Vector()).normalized()).normalized()
+    S_frames = semantic_frames(J, hinge)
+    T_frames = semantic_frames(T_head, {h: T_hinge[h] for h in hinge})
     R0 = {k2: m.translation for k2, m in rest.items()}
     src_leg = (R0['thighL'] - R0['calfL']).length + (R0['calfL'] - R0['footL']).length
     k = tgt_leg / src_leg
     # per semantic bone: target world rot = delta_src @ S_frame @ T_frame^-1 @ T_rest_rot
     corr = {key: (S_frames[key] @ T_frames[key].inverted()).to_quaternion() for key in FRAMES}
     T_rest_q = {key: T_rest[TGT[key]].to_quaternion() for key in FRAMES}
-    n_src = f1 - f0 + 1
-    step = 1.0 / (ft * FPS)  # source frames per output frame
-    first = f0 + int(round(t0 / ft))
-    last = f1 if t1 is None else min(f1, f0 + int(round(t1 / ft)))
     frames = []
     fsrc = float(first)
-    sc = bpy.context.scene
     while fsrc <= last:
         fi = int(math.floor(fsrc))
         sc.frame_set(fi, subframe=fsrc - fi)
@@ -187,16 +236,24 @@ def sample_clip(name, file, kind, t0, t1):
         for key in FRAMES:
             d = pose[key][0]
             world[key] = d @ corr[key] @ T_rest_q[key]
-        frames.append(dict(rot=world, hips=pose['hips'][1] * k))
+        # 'hips' is the point between the hip joints (not the root joint: the CMU skeleton's
+        # sits about 10 cm above its hip joints, Rocketbox's pelvis level with them)
+        frames.append(dict(rot=world, hips=(pose['thighL'][1] + pose['thighR'][1]) * (k / 2)))
         fsrc += step
     bpy.data.objects.remove(src)
     bpy.data.actions.remove(act)
-    log(name, f'{len(frames)} frames @ {FPS} fps from {n_src} source frames, scale {k:.4f}')
+    log(name, f'{len(frames)} frames @ {FPS} fps from {n_src} source frames, scale {k:.4f}, hinges from the clip: {sorted(hinge)}')
     return frames
 
 
 def to_local(fr):
     """World (armature-space) rotations of the semantic bones -> pose-bone basis quaternions."""
+    return posed(fr)[0]
+
+
+def posed(fr):
+    """(pose-bone bases, armature-space bone matrices) of a frame. The root goes where it puts
+    the point between the hip joints at fr['hips']."""
     pose = {}
     basis = {}
     for name in order:
@@ -225,7 +282,30 @@ def to_local(fr):
         pose[name] = M
         B = base.inverted() @ M
         basis[name] = (B.to_quaternion(), B.translation.copy())
-    return basis
+    # move the root (and with it everything) so the hip joints land where the source's are
+    mid = (pose[TGT['thighL']].translation + pose[TGT['thighR']].translation) / 2
+    shift = Matrix.Translation(fr['hips'] - mid)
+    pose = {n: shift @ M for n, M in pose.items()}
+    for name in order:
+        if tb[name].parent is None:
+            B = T_rest[name].inverted() @ pose[name]
+            basis[name] = (B.to_quaternion(), B.translation.copy())
+    return basis, pose
+
+
+def ground(frames):
+    """Lower (or raise) a clip so the feet meet the floor: at its lowest, a foot is as high as
+    it is standing in the rest pose (ankle or toe joint, whichever is lower relative to its
+    rest height, so a heel or toe contact counts). Returns the change and the median gap."""
+    keys = ('footL', 'footR', 'toeL', 'toeR')
+    gaps = []
+    for fr in frames:
+        P = posed(fr)[1]
+        gaps.append(min(P[TGT[k]].translation.z - T_head[k].z for k in keys))
+    dz = min(gaps)
+    for fr in frames:
+        fr['hips'] = fr['hips'] - Vector((0, 0, dz))
+    return dz, float(np.median(gaps)) - dz
 
 
 def hips_track(frames):
@@ -234,12 +314,16 @@ def hips_track(frames):
 
 def features(frames):
     rows = []
+    prev = {}
     for f in frames:
         r = []
         for key in ('spine', 'chest', 'armL', 'armR', 'foreL', 'foreR', 'thighL', 'thighR', 'calfL', 'calfR', 'footL', 'footR'):
             q = f['rot']['hips'].inverted() @ f['rot'][key]
-            if q.w < 0:
+            # keep the sign continuous through the clip (q and -q are the same rotation); a
+            # fixed rule like w >= 0 flips mid-clip for joints near 180 degrees from the hips
+            if (prev[key].dot(q) if key in prev else q.w) < 0:
                 q = -q
+            prev[key] = q
             r += [q.w, q.x, q.y, q.z]
         r.append(f['hips'].z * 3)
         rows.append(r)
@@ -381,6 +465,9 @@ for name, (file, kind, t0, t1, mode) in CLIPS.items():
         off = next(i for i in range(low, apex) if z[i] > base)
         down = next((i for i in range(apex, len(z)) if z[i] < base), len(z) - 1)
         meta[name] = dict(duration=len(frames) / FPS, takeoff=off / FPS, apex=apex / FPS, land=down / FPS)
+    if name != 'swim':  # the game floats the swim clip at the surface itself
+        dz, gap = ground(frames)
+        log(name, f'{"raised" if dz < 0 else "lowered"} {abs(dz) * 100:.1f} cm to the floor; median foot gap {gap * 100:.1f} cm')
     act = write_action(name, frames, mode != 'once')
     if mode == 'cycle' and name != 'swim':
         # where in the loop the left foot is furthest forward (its heel strike), so the game
