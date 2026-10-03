@@ -39,6 +39,14 @@ python3 -m http.server 8000
 
 Then open the printed URL. three.js and its add-ons (post-processing, sky) are loaded from the jsDelivr CDN through the import map in `index.html`.
 
+### Smoke test
+
+`tools/smoke-test.mjs` opens the game at a phone (390×844, touch) and a desktop (1366×800) viewport, walks in, opens every panel and fails on any console error, sideways scrolling, or a touch control under 44px:
+
+```sh
+npm i --no-save playwright && node tools/smoke-test.mjs
+```
+
 ### GitHub Pages
 
 Settings → Pages → *Deploy from a branch* → `main` / `(root)`. The game is plain static files (`.nojekyll` is included), so it works as-is.
@@ -106,6 +114,7 @@ lightmaps/        baked lighting (two 2048² pages and a manifest)
 assets/           CC0 textures, the sky, and car models (credits in each folder)
 tools/bake/       scene export (Playwright) and the Blender bake + encode scripts
 tools/build-artifact.mjs  packages the page for a Claude Artifact preview
+tools/smoke-test.mjs      loads the page at phone and desktop sizes and fails on console errors
 docs/             photos of the original floor-plan handout, one per floor
 ```
 
