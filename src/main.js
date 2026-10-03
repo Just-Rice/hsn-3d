@@ -284,6 +284,7 @@ function toast(msg, ms = 2600) {
 }
 const progress = (pct, msg) => {
   $('#loadbar i').style.width = pct + '%';
+  $('#loadbar').setAttribute('aria-valuenow', Math.round(pct));
   $('#loadmsg').textContent = msg;
   return new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
 };
@@ -642,6 +643,7 @@ function openOverlay(name) {
   }
   if (name === 'tp') renderTp();
   if (name === 'char') renderChar();
+  if (name !== 'find') $(overlays[name] + ' [data-close]').focus({ preventScroll: true });
 }
 $$('[data-close]').forEach((b) => b.addEventListener('click', closeOverlays));
 $$('.overlay').forEach((o) => o.addEventListener('pointerdown', (e) => { if (e.target === o && o.id !== 'start') closeOverlays(); }));
@@ -833,7 +835,10 @@ function drawBigMap() {
 $$('#mapfloor button').forEach((b) =>
   b.addEventListener('click', () => {
     mapLv = +b.dataset.lv;
-    $$('#mapfloor button').forEach((o) => o.classList.toggle('on', o === b));
+    $$('#mapfloor button').forEach((o) => {
+      o.classList.toggle('on', o === b);
+      o.setAttribute('aria-pressed', o === b);
+    });
     mapHover = null;
     drawBigMap();
   }),
@@ -925,6 +930,7 @@ function renderChar() {
       b.style.background = col;
       b.title = col;
       b.setAttribute('aria-label', `${label} ${col}`);
+      b.setAttribute('aria-pressed', look[k].toLowerCase() === col);
       if (look[k].toLowerCase() === col) b.classList.add('on');
       b.addEventListener('click', () => setPart(k, col));
       sw.appendChild(b);
@@ -938,7 +944,10 @@ function renderChar() {
     sw.appendChild(inp);
     box.append(l, sw);
   }
-  $$('#optq button').forEach((b) => b.classList.toggle('on', b.dataset.q === quality));
+  $$('#optq button').forEach((b) => {
+    b.classList.toggle('on', b.dataset.q === quality);
+    b.setAttribute('aria-pressed', b.dataset.q === quality);
+  });
 }
 function setPart(k, col, rerender = true) {
   const look = currentLook();
@@ -1078,6 +1087,7 @@ if (isTouch) {
     e.preventDefault();
     touchSprint = !touchSprint;
     $('#tsprint').classList.toggle('on', touchSprint);
+    $('#tsprint').setAttribute('aria-pressed', touchSprint);
   });
 }
 
