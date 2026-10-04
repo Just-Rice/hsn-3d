@@ -59,11 +59,11 @@
   .btn.primary:hover { background: var(--brand-hi); }
   .btn:disabled { opacity: 0.6; cursor: progress; }
 
-  #navbar { left: 50%; transform: translateX(-50%); bottom: calc(18px + var(--safe-b)); padding: 9px 10px 9px 16px; align-items: center; gap: 14px; pointer-events: auto; max-width: calc(100vw - 32px); display: flex; }
+  #navbar { left: 50%; transform: translateX(-50%); bottom: calc(18px + var(--safe-b)); padding: 9px 10px 9px 16px; align-items: center; gap: 14px; pointer-events: auto; width: max-content; max-width: calc(100vw - 32px); display: flex; }
   #navbar .t { font-weight: 700; }
   #navbar .t b { color: var(--route); }
   #navbar .d { font-size: 13px; color: var(--muted); }
-  #toast { left: 50%; top: 18%; transform: translateX(-50%); padding: 12px 18px; font: 400 18px var(--display); opacity: 0; transition: opacity 0.35s; text-align: center; max-width: calc(100vw - 32px); }
+  #toast { left: 50%; top: 18%; transform: translateX(-50%); padding: 12px 18px; font: 400 18px var(--display); opacity: 0; transition: opacity 0.35s; text-align: center; width: max-content; max-width: calc(100vw - 32px); }
   #toast.on { opacity: 1; }
   #crosshair { left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: var(--ink); opacity: 0.8; }
   #help { left: 14px; bottom: calc(14px + var(--safe-b)); padding: 10px 14px; font-size: 13px; line-height: 1.7; color: var(--muted); }
@@ -90,11 +90,12 @@
 
   #start { background: radial-gradient(ellipse at 30% 20%, rgba(31, 69, 168, 0.5), var(--scrim) 70%); }
   #start .card { width: min(580px, 100%); max-height: 100%; overflow: auto; padding: 26px 26px 22px; display: flex; flex-direction: column; gap: 14px; }
-  #start .eyebrow { font: 700 12px var(--ui); letter-spacing: 3px; color: var(--accent); text-transform: uppercase; }
+  #start .eyebrow { font: 700 12px var(--ui); letter-spacing: 3px; color: var(--accent); text-transform: uppercase; text-wrap: balance; }
   #start h1 { margin: 0; font: 400 clamp(26px, 5.2vw, 36px)/1.08 var(--display); color: var(--ink); text-wrap: balance; }
   #start h1 span { color: var(--brand-lite); }
   #start .lede { color: var(--muted); font-size: 16px; max-width: 46ch; }
-  #start .keys { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 15px; }
+  #start .keys { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 15px; align-items: center; }
+  #start .keys kbd { justify-self: start; }
   #start .actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
   #start .go { font-size: 17px; padding: 11px 24px; }
   #loadbar { flex: 1; min-width: 140px; height: 6px; background: var(--keycap); border-radius: 99px; overflow: hidden; }
@@ -145,6 +146,8 @@
     #tools .btn .ico { display: inline; }
     #help { display: none; }
     #navbar { bottom: calc(18px + var(--safe-b)); max-width: calc(100vw - 380px); }
+    /* fit the campus map on screen instead of making the panel scroll */
+    #bigmap { height: max(160px, calc(100vh - 170px)); height: max(160px, calc(100dvh - 170px)); }
   }
   @media (prefers-reduced-motion: reduce) { #toast, #loadbar i { transition: none; } }
 </style>

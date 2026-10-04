@@ -928,6 +928,8 @@ function renderChar() {
     for (const col of opts) {
       const b = document.createElement('button');
       b.style.background = col;
+      b.dataset.part = k;
+      b.dataset.col = col;
       b.title = col;
       b.setAttribute('aria-label', `${label} ${col}`);
       b.setAttribute('aria-pressed', look[k].toLowerCase() === col);
@@ -954,7 +956,13 @@ function setPart(k, col, rerender = true) {
   look[k] = col;
   store.set('look', look);
   character.setLook(look);
-  if (rerender) renderChar();
+  if (!rerender) return;
+  // update in place so keyboard focus stays on the swatch that was picked
+  $$(`#charsw button[data-part="${k}"]`).forEach((b) => {
+    b.classList.toggle('on', b.dataset.col === col);
+    b.setAttribute('aria-pressed', b.dataset.col === col);
+  });
+  $('#col-' + k).value = col;
 }
 $('#charreset').addEventListener('click', () => {
   store.set('look', DEFAULT_LOOK);
