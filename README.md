@@ -4,6 +4,8 @@ A walkable 3D model of **West Windsor-Plainsboro High School North**, 90 Grovers
 
 **Play it:** https://just-rice.github.io/hsn-3d/
 
+**Also here:** [`home/`](home/) is a smaller walkthrough of an average single-family house (three bedrooms, two baths, a two-car garage). Open `/home/` on the same server.
+
 It runs in the browser with [three.js](https://threejs.org/). There is no build step and nothing to install.
 
 ## Play

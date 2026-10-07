@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Home 3D</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%274%27 fill=%27%232b4a7a%27/%3E%3Cpath d=%27M3 8 8 3.5 13 8v5H3z%27 fill=%27%23f3f1ec%27/%3E%3C/svg%3E">
+<meta name="description" content="Walk through an average single-family home in 3D: a 3-bedroom, 2-bath ranch with an attached two-car garage." />
+<style>
+  :root {
+    --panel: rgba(18, 22, 30, 0.8);
+    --ink: #f3f1ec;
+    --muted: #b9bfca;
+    --line: rgba(255, 255, 255, 0.16);
+    --key: rgba(255, 255, 255, 0.14);
+    --accent: #f0c26b;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #9cc3e6; color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  canvas#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
+  .panel { position: fixed; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); pointer-events: none; }
+  #loc { top: 14px; left: 14px; padding: 10px 14px; min-width: 200px; }
+  #where { font-size: 19px; font-weight: 650; letter-spacing: 0.2px; }
+  #sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  #mapwrap { top: 14px; right: 14px; padding: 8px; }
+  #map { display: block; width: 220px; height: 220px; border-radius: 6px; }
+  #mapwrap .cap { color: var(--muted); font-size: 11.5px; margin-top: 4px; text-align: center; }
+  #prompt { bottom: 96px; left: 50%; transform: translateX(-50%); padding: 8px 16px; font-weight: 600; white-space: nowrap; }
+  #help { left: 14px; bottom: 14px; padding: 12px 14px; max-width: min(360px, calc(100vw - 28px)); }
+  #help h2 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); }
+  #help ul { margin: 0; padding: 0; list-style: none; }
+  #help li { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; color: var(--muted); }
+  kbd { font: 700 11.5px ui-monospace, Menlo, Consolas, monospace; background: var(--key); border-radius: 5px; padding: 1px 6px; color: var(--ink); white-space: nowrap; }
+  #hint { bottom: 14px; right: 14px; padding: 8px 12px; color: var(--muted); font-size: 12.5px; }
+  @media (max-width: 640px) {
+    #map { width: 150px; height: 150px; }
+    #mapwrap { top: auto; bottom: 14px; right: 14px; }
+    #hint { display: none; }
+    #help { display: none; }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.min.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="view" tabindex="0" aria-label="3D view of the house"></canvas>
+
+<div id="loc" class="panel">
+  <div id="where">Front yard</div>
+  <div id="sub"></div>
+</div>
+
+<div id="mapwrap" class="panel" hidden>
+  <canvas id="map" width="440" height="440" aria-label="Floor plan"></canvas>
+  <div class="cap">Floor plan · north is up · <kbd>M</kbd> hides it</div>
+</div>
+
+<div id="prompt" class="panel" hidden></div>
+
+<div id="help" class="panel">
+  <h2>Controls</h2>
+  <ul>
+    <li><span><kbd>W A S D</kbd> or arrows</span><span>walk</span></li>
+    <li><span><kbd>Shift</kbd></span><span>run</span></li>
+    <li><span><kbd>Space</kbd></span><span>jump</span></li>
+    <li><span><kbd>E</kbd></span><span>open or close a door</span></li>
+    <li><span><kbd>L</kbd></span><span>light switch</span></li>
+    <li><span><kbd>V</kbd></span><span>first or third person</span></li>
+    <li><span>Mouse drag or click + move</span><span>look</span></li>
+    <li><span>Scroll</span><span>camera distance</span></li>
+    <li><span><kbd>M</kbd> · <kbd>H</kbd></span><span>floor plan · this panel</span></li>
+  </ul>
+</div>
+
+<div id="hint" class="panel">Click the view, then use the keys.</div>
+
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>
