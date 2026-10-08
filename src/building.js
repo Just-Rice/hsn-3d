@@ -259,7 +259,9 @@ export function buildBuilding(scene, world, T, M) {
     const [x2, z2] = P(axis, c + 0.3, m);
     return Math.max(wallTop0(x1, z1), wallTop0(x2, z2));
   };
-  const wallColor = [hexToRGB('#ece4d3'), hexToRGB('#e2e9e6')];
+  // The block is painted white on both floors (the photos are nearly pure white). A slight cool
+  // tint offsets the warm baked light, so it reads white rather than cream on screen.
+  const wallColor = [hexToRGB('#eceff3'), hexToRGB('#eceff3')];
   const baseCol = hexToRGB('#3b3733');
   const mapWalls = [[], []];
   const doorways = [];

@@ -419,7 +419,7 @@ async function build() {
   world.waters = [{ r: info.poolPit, y: -0.22 }];
   player = new Player(world, character);
   // the realistic avatar replaces the simple figure once it has loaded
-  loadAvatar(look.avatar);
+  if (REALISTIC_STUDENTS) loadAvatar(look.avatar);
   cam = new FollowCamera(camera, world);
   // balls to kick around
   balls = new Balls(scene, world);
@@ -464,6 +464,10 @@ async function build() {
 // Rocketbox students with motion capture (avatar.js); the backpack comes from props.glb
 const propsReady = loadProps('assets/models/props.glb');
 propsReady.catch(() => {}); // handled where it's used; without the models the simple furniture stays
+// Realistic students are off for now: the simple figure is the player until one is picked
+// (the Character panel then shows the list again).
+const REALISTIC_STUDENTS = false;
+const twoStory = (x, z) => info.level1Rects.some((r) => inRect(r, x, z));
 const AVATARS = [
   ['m1', 'Blue hoodie'],
   ['f1', 'Green tee'],
@@ -1043,7 +1047,7 @@ function renderChar() {
   const box = $('#charsw');
   box.innerHTML = '';
   const look = currentLook();
-  {
+  if (REALISTIC_STUDENTS) {
     const l = document.createElement('div');
     l.className = 'muted';
     l.textContent = 'Student';
@@ -1372,8 +1376,8 @@ function frame(now = performance.now()) {
   if (hudTimer <= 0) {
     hudTimer = 0.2;
     locate();
-    cullProps(furn.props, camera.position, indoorK > 0.5, QUALITY[quality].far);
-    cullProps(info.propMeshes, camera.position, indoorK > 0.5, QUALITY[quality].far);
+    cullProps(furn.props, camera.position, indoorK > 0.5, QUALITY[quality].far, twoStory);
+    cullProps(info.propMeshes, camera.position, indoorK > 0.5, QUALITY[quality].far, twoStory);
   }
   const mc = $('#mini');
   drawMinimap(miniCtx, mc.width, maps, p.x, p.z, cam.yaw, player.yaw, navPath, player.level, navDest && navDest.lv === player.level ? navDest : null);

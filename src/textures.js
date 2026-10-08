@@ -236,7 +236,7 @@ export function makeTextures() {
       }
     };
     put('block', surface(S, 12 * 0.1778, (g) => {
-      g.fillStyle = '#f3f0e8';
+      g.fillStyle = '#f6f6f4';
       g.fillRect(0, 0, S, S);
       // slight unit-to-unit variation under the paint
       for (let y = 0; y < rows; y++) {

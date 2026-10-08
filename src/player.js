@@ -140,16 +140,16 @@ export class Character {
       }
       this.legs[0].hp.rotation.x = Math.sin(t * 3) * 0.35;
       this.legs[1].hp.rotation.x = -Math.sin(t * 3) * 0.35;
-      this.legs[0].knee.rotation.x = lerp(this.legs[0].knee.rotation.x, 0.2);
-      this.legs[1].knee.rotation.x = lerp(this.legs[1].knee.rotation.x, 0.2);
+      this.legs[0].knee.rotation.x = lerp(this.legs[0].knee.rotation.x, -0.2);
+      this.legs[1].knee.rotation.x = lerp(this.legs[1].knee.rotation.x, -0.2);
       return;
     }
     this.hips.rotation.x = lerp(this.hips.rotation.x, 0);
     if (!grounded) {
       this.legs[0].hp.rotation.x = lerp(this.legs[0].hp.rotation.x, -0.5);
       this.legs[1].hp.rotation.x = lerp(this.legs[1].hp.rotation.x, 0.3);
-      this.legs[0].knee.rotation.x = lerp(this.legs[0].knee.rotation.x, 0.9);
-      this.legs[1].knee.rotation.x = lerp(this.legs[1].knee.rotation.x, 0.4);
+      this.legs[0].knee.rotation.x = lerp(this.legs[0].knee.rotation.x, -0.9);
+      this.legs[1].knee.rotation.x = lerp(this.legs[1].knee.rotation.x, -0.4);
       this.arms[0].rotation.x = lerp(this.arms[0].rotation.x, -2.4);
       this.arms[1].rotation.x = lerp(this.arms[1].rotation.x, -2.4);
       this.hips.position.y = lerp(this.hips.position.y, 0.92);
@@ -157,8 +157,11 @@ export class Character {
     }
     this.legs[0].hp.rotation.x = lerp(this.legs[0].hp.rotation.x, s * swing);
     this.legs[1].hp.rotation.x = lerp(this.legs[1].hp.rotation.x, -s * swing);
-    this.legs[0].knee.rotation.x = lerp(this.legs[0].knee.rotation.x, Math.max(0, -Math.cos(this.phase)) * swing * 1.3);
-    this.legs[1].knee.rotation.x = lerp(this.legs[1].knee.rotation.x, Math.max(0, Math.cos(this.phase)) * swing * 1.3);
+    // The figure faces -Z, so a positive x rotation would swing the shin forward of the knee (a
+    // bird's leg). Knees bend the other way, and most while that leg swings forward: its thigh
+    // angle is +-sin(phase), so it moves forward while +-cos(phase) > 0, deepest as it passes under.
+    this.legs[0].knee.rotation.x = lerp(this.legs[0].knee.rotation.x, -Math.max(0, Math.cos(this.phase)) * swing * 1.3);
+    this.legs[1].knee.rotation.x = lerp(this.legs[1].knee.rotation.x, -Math.max(0, -Math.cos(this.phase)) * swing * 1.3);
     this.arms[0].rotation.x = lerp(this.arms[0].rotation.x, -s * swing * 0.9);
     this.arms[1].rotation.x = lerp(this.arms[1].rotation.x, s * swing * 0.9);
     const bob = moving ? Math.abs(Math.cos(this.phase)) * 0.045 * swing : Math.sin(performance.now() / 700) * 0.006;

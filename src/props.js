@@ -65,16 +65,18 @@ export function upgradeProps(scene, protos) {
 }
 
 // Hides furniture chunks far from the camera (indoors you rarely see more than a hallway's
-// length) and chunks on the other floor, which the floor slab hides anyway.
+// length) and chunks on the other floor, which the floor slab hides anyway. Only the two-story
+// wing has another floor (twoStory(x, z)): elsewhere a chunk high above you is the ceiling
+// lights of a gym, the pool or the theatre.
 const _c = new THREE.Vector3();
-export function cullProps(meshes, cam, indoor, range = [45, 90]) {
+export function cullProps(meshes, cam, indoor, range = [45, 90], twoStory = () => true) {
   const far = indoor ? range[0] : range[1];
   for (const m of meshes) {
     const bs = m.boundingSphere;
     if (!bs) continue;
     _c.copy(bs.center);
     const d = _c.distanceTo(cam) - bs.radius;
-    const otherFloor = indoor && Math.abs(_c.y - cam.y) > 4.5 && bs.radius < 30;
+    const otherFloor = indoor && Math.abs(_c.y - cam.y) > 4.5 && bs.radius < 30 && twoStory(_c.x, _c.z);
     m.visible = d < far && !otherFloor;
   }
 }
