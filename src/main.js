@@ -1006,8 +1006,12 @@ canvas.addEventListener('click', () => {
     /* pointer lock unavailable: drag to look instead */
   }
 });
+// Capturing the mouse warps the cursor to the center, and some browsers report that warp as
+// one huge movement; skip the first event after capture and any implausible single jump.
+let skipMove = false;
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
+  skipMove = true;
 });
 canvas.addEventListener('mousedown', (e) => {
   if (!locked) dragging = true;
@@ -1017,7 +1021,11 @@ canvas.addEventListener('mousedown', (e) => {
 addEventListener('mouseup', () => (dragging = false));
 addEventListener('mousemove', (e) => {
   if (!running || openName) return;
-  if (locked) cam.rotate(e.movementX * 0.0022, e.movementY * 0.0022);
+  if (locked) {
+    const jump = Math.abs(e.movementX) > 250 || Math.abs(e.movementY) > 250;
+    if (skipMove || jump) { skipMove = false; return; }
+    cam.rotate(e.movementX * 0.0022, e.movementY * 0.0022);
+  }
   else if (dragging) cam.rotate(e.movementX * 0.005, e.movementY * 0.005);
 });
 canvas.addEventListener('wheel', (e) => {
