@@ -15,6 +15,10 @@ import { buildBuilding } from './building.js';
 import { buildFurniture } from './furniture.js';
 import { buildExterior, loadCars, loadTrees, sat } from './exterior.js';
 import { Character, Player, FollowCamera, DEFAULT_LOOK } from './player.js';
+import { Avatar } from './avatar.js';
+import { FloorReflections } from './reflect.js';
+import { loadProps, upgradeProps, cullProps, propFill } from './props.js';
+import { Grass } from './grass.js';
 import { NavGrid } from './nav.js';
 import { Balls } from './balls.js';
 import { loadLightmaps } from './lightmap.js';
@@ -45,21 +49,44 @@ const isTouch = matchMedia('(pointer: coarse)').matches;
 const hot = window.claude?.hot;
 
 // ------------------------------------------------------------------ renderer + scene
-// Quality tiers. "high" is the full look: soft sun shadows, ambient occlusion, bloom, MSAA.
+// Quality tiers, cheapest first. dpr: the most pixels per CSS pixel; shadow: sun shadow map
+// size (0 = none); post: ambient occlusion (ao), bloom and grading; reflect: floor reflection
+// resolution (0 = none); grass: blade density; bulbs: real-time lights that follow you;
+// far: how far indoor / outdoor furniture is drawn.
+const TIERS = ['low', 'medium', 'high', 'ultra'];
 const QUALITY = {
-  low: { dpr: 1, shadow: 0, post: false, ao: false, samples: 0 },
-  medium: { dpr: 1.5, shadow: 2048, post: true, ao: false, samples: 4 },
-  high: { dpr: 2, shadow: 4096, post: true, ao: true, samples: 4 },
+  low: { dpr: 0.75, shadow: 0, post: false, ao: false, samples: 0, reflect: 0, grass: 0, bulbs: 0, far: [25, 50] },
+  medium: { dpr: 1, shadow: 1024, post: true, ao: false, samples: 2, reflect: 0.25, grass: 0.35, bulbs: 3, far: [35, 70] },
+  high: { dpr: 1.5, shadow: 2048, post: true, ao: true, samples: 4, reflect: 0.4, grass: 0.75, bulbs: 6, far: [45, 90] },
+  ultra: { dpr: 2, shadow: 4096, post: true, ao: true, samples: 4, reflect: 0.5, grass: 1, bulbs: 8, far: [60, 120] },
 };
-let quality = store.get('quality', isTouch ? 'medium' : 'high');
+// What the player picked in Settings. quality: 'auto' or a tier; fps: frame cap (0 = none);
+// res: 'auto' (adaptive) or a fixed fraction of the tier's resolution.
+const gfx = { quality: 'auto', fps: 60, res: 'auto', showFps: false, ...store.get('gfx', {}) };
+if (!store.get('gfx', null) && QUALITY[store.get('quality', '')]) gfx.quality = store.get('quality'); // older saves
+// The tier in use. Auto starts from a guess about the GPU (or from what worked last time) and
+// steps down by itself if the game can't keep up even at its lowest resolution.
+function guessTier() {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
+    const name = (ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : '') || '';
+    if (/swiftshader|llvmpipe|software|mali-[gt]?[0-9]{1,2}\b|adreno \(tm\) [3-5]/i.test(name)) return 'low';
+    if (/intel|mali|adreno|powervr|apple gpu/i.test(name) || isTouch) return 'medium';
+  } catch {
+    /* no WebGL info: fall through */
+  }
+  return 'high';
+}
+let quality = gfx.quality === 'auto' ? store.get('autoTier', null) || guessTier() : gfx.quality;
 if (!QUALITY[quality]) quality = 'high';
 
 const canvas = $('#view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setSize(innerWidth, innerHeight, false);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.92;
+renderer.toneMapping = THREE.NeutralToneMapping; // Khronos PBR Neutral: keeps paint and brick colors true
+renderer.toneMappingExposure = 0.8;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -93,6 +120,7 @@ sky.frustumCulled = false;
 scene.add(sky);
 
 // image-based lighting: the sky (with a grass-colored ground) outdoors, a neutral room indoors
+const reflections = new FloorReflections(renderer, scene, camera);
 const pmrem = new THREE.PMREMGenerator(renderer);
 let skyEnv = (() => {
   const s = new THREE.Scene();
@@ -111,11 +139,11 @@ const HEMI_OUT = [new THREE.Color(0xdfe9ff), new THREE.Color(0x8a7f6c)];
 const HEMI_IN = [new THREE.Color(0xf4f1ea), new THREE.Color(0xa7a6a2)];
 // Ceiling fixtures near the player get real point lights (a small pool that follows you),
 // so hallways and rooms have pools of light instead of flat ambient.
-const BULBS = { low: 0, medium: 4, high: 8 };
+
 const bulbs = [];
 let bulbTimer = 0;
 function setupBulbs() {
-  const n = BULBS[quality];
+  const n = QUALITY[quality].bulbs;
   while (bulbs.length > n) scene.remove(bulbs.pop().light);
   while (bulbs.length < n) {
     const light = new THREE.PointLight(0xf3f2ee, 0, 10, 2);
@@ -236,9 +264,12 @@ function setupPost() {
     composer.dispose();
   }
   composer = aoPass = bloomPass = null;
-  const dpr = Math.min(devicePixelRatio, q.dpr);
+  const dpr = Math.max(0.5, Math.min(devicePixelRatio, q.dpr) * resScale);
   renderer.setPixelRatio(dpr);
   renderer.setSize(innerWidth, innerHeight, false);
+  reflections.enabled = q.reflect > 0;
+  reflections.scale = q.reflect;
+  reflections.setSize(innerWidth * dpr, innerHeight * dpr);
   if (!q.post) return;
   const w = innerWidth * dpr, h = innerHeight * dpr;
   const rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples: q.samples });
@@ -259,6 +290,59 @@ function setupPost() {
   composer.addPass(new ShaderPass(VignetteShader));
   composer.addPass(new OutputPass());
 }
+// Adaptive resolution (Settings > Resolution: Auto): if the frame rate stays well under the
+// target for a few seconds, render fewer pixels (down to 55% of the tier's); with headroom,
+// step back up. With Quality on Auto, a tier that still can't keep up at 70% resolution
+// steps down to the next one (and the game remembers it). Changes are rare
+// because resizing the render targets causes a hitch. Called every half second.
+const RES_MIN = 0.55;
+let resScale = typeof gfx.res === 'number' ? gfx.res : 1, resLow = 0, resHigh = 0, resWait = 4;
+let tierLow = 0, tierHigh = 0, autoCeil = TIERS.indexOf('high');
+let lastFps = 0;
+function adaptResolution(fps) {
+  lastFps = fps;
+  if (!running || document.hidden || openName || window.__fixedRes) return; // __fixedRes: for screenshots
+  const target = gfx.fps || 60;
+  resWait -= 0.5;
+  resLow = fps < target * 0.65 ? resLow + 0.5 : 0;
+  resHigh = fps > target * 0.95 ? resHigh + 0.5 : 0;
+  // Auto quality: once the resolution is down to 70%, a lower tier at full resolution looks
+  // better than this one any blurrier, so step the tier down instead
+  const resMin = gfx.quality === 'auto' && quality !== 'low' ? 0.7 : RES_MIN;
+  if (gfx.quality === 'auto') {
+    const floor = gfx.res === 'auto' ? resScale <= resMin + 0.01 : true;
+    tierLow = fps < target * 0.8 && floor ? tierLow + 0.5 : 0;
+    tierHigh = fps > target * 0.97 && resScale >= 1 ? tierHigh + 0.5 : 0;
+    const i = TIERS.indexOf(quality);
+    if (tierLow >= 5 && i > 0) {
+      autoCeil = i - 1; // don't climb back to the tier that couldn't keep up
+      setTier(TIERS[i - 1]);
+      toast(`Graphics set to ${TIERS[i - 1]} to keep things smooth`);
+      return;
+    }
+    if (tierHigh >= 30 && i < autoCeil) {
+      setTier(TIERS[i + 1]);
+      return;
+    }
+  }
+  if (gfx.res !== 'auto' || resWait > 0) return;
+  const next = resLow >= 3 ? Math.max(resMin, resScale - 0.15) : resHigh >= 6 ? Math.min(1, resScale + 0.15) : resScale;
+  if (next !== resScale) {
+    resScale = next;
+    resWait = 4;
+    resLow = resHigh = 0;
+    setupPost();
+  }
+}
+function setTier(t) {
+  quality = t;
+  if (gfx.quality === 'auto') store.set('autoTier', t);
+  resScale = typeof gfx.res === 'number' ? gfx.res : 1;
+  resWait = 4;
+  tierLow = tierHigh = resLow = resHigh = 0;
+  applyQuality();
+  if (openName === 'set') renderSettings();
+}
 function applyQuality() {
   const q = QUALITY[quality];
   sun.castShadow = q.shadow > 0;
@@ -269,6 +353,7 @@ function applyQuality() {
   }
   shadowHalf = 0;
   setupBulbs();
+  if (grass && q.grass) grass.setDensity(q.grass);
   scene.traverse((o) => o.material && (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => (m.needsUpdate = true)));
   setupPost();
 }
@@ -289,7 +374,7 @@ const progress = (pct, msg) => {
 };
 
 // ------------------------------------------------------------------ build the world
-let info, ext, nav, maps, world, player, character, cam, balls;
+let info, ext, nav, maps, world, player, character, cam, balls, furn, grass;
 let baked = null; // lightmap manifest once the baked lighting has loaded
 let texturesReady = Promise.resolve(0);
 let running = false;
@@ -306,7 +391,7 @@ async function build() {
   await progress(20, 'Raising walls from the floor plans…');
   info = buildBuilding(scene, world, T, M);
   await progress(45, 'Setting out desks, lockers and seats…');
-  buildFurniture(scene, world, info, T, M);
+  furn = buildFurniture(scene, world, info, T, M);
   await progress(62, 'Paving the lots and lining the fields…');
   ext = buildExterior(scene, world, info, T, M);
   loadCars(scene, ext).catch((e) => console.warn('car models unavailable', e));
@@ -333,6 +418,8 @@ async function build() {
   scene.add(character.group);
   world.waters = [{ r: info.poolPit, y: -0.22 }];
   player = new Player(world, character);
+  // the realistic avatar replaces the simple figure once it has loaded
+  loadAvatar(look.avatar);
   cam = new FollowCamera(camera, world);
   // balls to kick around
   balls = new Balls(scene, world);
@@ -351,6 +438,18 @@ async function build() {
     balls.add('soccer', ext.spawn[0] - 0.3, 0.05, ext.spawn[1] - 2.5); // on the walk, between the canopy's columns
   }
   initPathViz();
+  // grass blades on the lawns (a top-down mask of the lawn is rendered here, once)
+  grass = new Grass(scene, renderer, { lawnMaterial: ext.lawnMaterial, bounds: ext.lawnBounds });
+  // detailed furniture from Blender replaces the simple shapes once it has loaded
+  propsReady
+    .then((p) => upgradeProps(scene, p))
+    .catch((e) => console.warn('props not loaded, keeping the simple furniture:', e));
+  // floors that reflect (see reflect.js), with how glossy each finish is
+  const GLOSS = { floorTile: [1, 0.2], wood: [1, 0.22], stage: [0.5, 0.4], ceramic: [0.7, 0.15], concrete: [0.2, 0.6] };
+  for (const [key, mat] of Object.entries(info.materials)) {
+    const g = GLOSS[key.split('@')[0]];
+    if (g) reflections.patch(mat, ...g);
+  }
   applyQuality();
   // baked lighting loads in the background; the game starts with real-time lighting
   loadLightmaps(info.lightmap, info.lightmapped).then((man) => {
@@ -359,6 +458,36 @@ async function build() {
     applyQuality();
   });
   await progress(100, 'Ready.');
+}
+
+// ------------------------------------------------------------------ the player's avatar
+// Rocketbox students with motion capture (avatar.js); the backpack comes from props.glb
+const propsReady = loadProps('assets/models/props.glb');
+propsReady.catch(() => {}); // handled where it's used; without the models the simple furniture stays
+const AVATARS = [
+  ['m1', 'Blue hoodie'],
+  ['f1', 'Green tee'],
+  ['m2', 'Red track jacket'],
+  ['f2', 'Black hoodie'],
+];
+let avatarId = null;
+function loadAvatar(id) {
+  if (!AVATARS.some((a) => a[0] === id)) id = AVATARS[0][0];
+  avatarId = id;
+  return Avatar.load(`assets/models/people/student-${id}.glb`)
+    .then(async (av) => {
+      if (avatarId !== id) return; // picked another one while this loaded
+      av.wear((await propsReady.catch(() => new Map())).get('backpack'));
+      av.setLook(currentLook());
+      const old = character;
+      av.group.position.copy(old.group.position);
+      av.group.rotation.copy(old.group.rotation);
+      scene.remove(old.group);
+      character = av;
+      player.char = av;
+      scene.add(av.group);
+    })
+    .catch((e) => console.warn('avatar not loaded, keeping the current figure:', e));
 }
 
 // ------------------------------------------------------------------ places
@@ -440,7 +569,7 @@ function locate() {
     const rm = info.rooms.find((r) => r.level === lv && inRect(r.R, x, z));
     if (rm) {
       where = rm.type === 'stair' ? 'Stairwell' : rm.label && !rm.big && /\d/.test(rm.label) ? 'Room ' + rm.label : rm.name;
-      sub = (abbr(rm) ? abbr(rm) + ' · ' : '') + ({ class: 'Classroom', lab: 'Lab classroom', art: 'Art room', music: 'Music room', lecture: 'Tiered lecture hall', office: 'Office', lav: 'Restroom', locker: 'Locker room', storage: 'Storage', kitchen: 'Kitchen', gym: 'Gymnasium', pool: 'Natatorium', theatre: 'Auditorium', dining: 'Cafeteria', media: 'Library', weights: 'Weight room' }[rm.type] || '');
+      sub = (abbr(rm) ? abbr(rm) + ' · ' : '') + (rm.science ? 'Science classroom' : { class: 'Classroom', lab: 'Lab classroom', art: 'Art room', music: 'Music room', lecture: 'Tiered lecture hall', office: 'Office', lav: 'Restroom', locker: 'Locker room', storage: 'Storage', kitchen: 'Kitchen', gym: 'Gymnasium', pool: 'Natatorium', theatre: 'Auditorium', dining: 'Cafeteria', media: 'Library', weights: 'Weight room' }[rm.type] || '');
       if (rm.label && rm.type !== 'stair') {
         const key = rm.level + ':' + rm.label;
         if (!visited.has(key)) {
@@ -619,7 +748,7 @@ function updateNav(dt, force = false) {
 $('#navcancel').addEventListener('click', clearNav);
 
 // ------------------------------------------------------------------ overlays
-const overlays = { map: '#mapov', find: '#findov', tp: '#tpov', char: '#charov' };
+const overlays = { map: '#mapov', find: '#findov', tp: '#tpov', char: '#charov', set: '#setov' };
 let openName = null;
 function closeOverlays() {
   for (const s of Object.values(overlays)) $(s).classList.remove('on');
@@ -642,6 +771,7 @@ function openOverlay(name) {
   }
   if (name === 'tp') renderTp();
   if (name === 'char') renderChar();
+  if (name === 'set') renderSettings();
 }
 $$('[data-close]').forEach((b) => b.addEventListener('click', closeOverlays));
 $$('.overlay').forEach((o) => o.addEventListener('pointerdown', (e) => { if (e.target === o && o.id !== 'start') closeOverlays(); }));
@@ -899,13 +1029,12 @@ function renderTp() {
 }
 
 // --- character
+// '' = the student's own clothes
 const PARTS = [
-  ['shirt', 'Shirt', ['#1f45a8', '#c0c7d1', '#ffffff', '#14264f', '#b8322a', '#222222', '#2f7a47']],
-  ['pants', 'Pants', ['#2f3e5c', '#222222', '#6b6b6b', '#c8b48a', '#14264f', '#5a3a28']],
-  ['skin', 'Skin', ['#f3d2b5', '#e0ac86', '#c68a5e', '#9a6440', '#6e4428', '#4a2c1a']],
-  ['hair', 'Hair', ['#1a1410', '#3b2616', '#7a4a24', '#c7924a', '#e3c77a', '#9b2d1f', '#7c7c7c']],
-  ['shoes', 'Shoes', ['#f2f2f2', '#222222', '#b8322a', '#1f45a8', '#c0c7d1']],
-  ['pack', 'Backpack', ['#aeb6c1', '#1f45a8', '#222222', '#b8322a', '#14264f', '#e86fa0']],
+  ['shirt', 'Top', ['', '#1f45a8', '#c0c7d1', '#ffffff', '#14264f', '#b8322a', '#222222', '#2f7a47']],
+  ['pants', 'Pants', ['', '#2f3e5c', '#222222', '#6b6b6b', '#c8b48a', '#14264f', '#5a3a28']],
+  ['shoes', 'Shoes', ['', '#f2f2f2', '#222222', '#b8322a', '#1f45a8', '#c0c7d1']],
+  ['pack', 'Backpack', ['#2a55b8', '#aeb6c1', '#222222', '#b8322a', '#14264f', '#e86fa0']],
 ];
 function currentLook() {
   return { ...DEFAULT_LOOK, ...store.get('look', {}) };
@@ -914,6 +1043,25 @@ function renderChar() {
   const box = $('#charsw');
   box.innerHTML = '';
   const look = currentLook();
+  {
+    const l = document.createElement('div');
+    l.className = 'muted';
+    l.textContent = 'Student';
+    const row = document.createElement('div');
+    row.className = 'sw names';
+    for (const [id, name] of AVATARS) {
+      const b = document.createElement('button');
+      b.className = 'name';
+      b.textContent = name;
+      if (look.avatar === id) b.classList.add('on');
+      b.addEventListener('click', () => {
+        setPart('avatar', id);
+        loadAvatar(id);
+      });
+      row.appendChild(b);
+    }
+    box.append(l, row);
+  }
   for (const [k, label, opts] of PARTS) {
     const l = document.createElement('div');
     l.className = 'muted';
@@ -922,23 +1070,23 @@ function renderChar() {
     sw.className = 'sw';
     for (const col of opts) {
       const b = document.createElement('button');
-      b.style.background = col;
-      b.title = col;
-      b.setAttribute('aria-label', `${label} ${col}`);
-      if (look[k].toLowerCase() === col) b.classList.add('on');
+      if (col) b.style.background = col;
+      else b.classList.add('orig'); // the student's own
+      b.title = col || 'Original';
+      b.setAttribute('aria-label', `${label} ${col || 'original'}`);
+      if ((look[k] || '').toLowerCase() === col) b.classList.add('on');
       b.addEventListener('click', () => setPart(k, col));
       sw.appendChild(b);
     }
     const inp = document.createElement('input');
     inp.type = 'color';
     inp.id = 'col-' + k;
-    inp.value = look[k];
+    inp.value = look[k] || '#808080';
     inp.setAttribute('aria-label', `Custom ${label} color`);
     inp.addEventListener('input', () => setPart(k, inp.value, false));
     sw.appendChild(inp);
     box.append(l, sw);
   }
-  $$('#optq button').forEach((b) => b.classList.toggle('on', b.dataset.q === quality));
 }
 function setPart(k, col, rerender = true) {
   const look = currentLook();
@@ -948,18 +1096,63 @@ function setPart(k, col, rerender = true) {
   if (rerender) renderChar();
 }
 $('#charreset').addEventListener('click', () => {
-  store.set('look', DEFAULT_LOOK);
-  character.setLook(DEFAULT_LOOK);
+  const look = { ...DEFAULT_LOOK, avatar: currentLook().avatar };
+  store.set('look', look);
+  character.setLook(look);
   renderChar();
 });
-$$('#optq button').forEach((b) =>
-  b.addEventListener('click', () => {
-    quality = b.dataset.q;
-    store.set('quality', quality);
-    applyQuality();
-    renderChar();
-  }),
-);
+// --- settings (graphics)
+const SETTINGS = [
+  ['quality', 'Quality', [['auto', 'Auto'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['ultra', 'Ultra']]],
+  ['fps', 'Frame rate', [[30, '30'], [60, '60'], [0, 'No cap']]],
+  ['res', 'Resolution', [['auto', 'Auto'], [0.5, '50%'], [0.75, '75%'], [1, '100%']]],
+];
+const SETTING_HINTS = {
+  quality: { auto: 'Picks a level for your computer and lowers it if the game slows down.', low: 'For Chromebooks and older laptops: no shadows, reflections, grass or effects.', medium: 'Shadows, bloom, some reflections and grass.', high: 'Ambient occlusion, sharper shadows and reflections, more grass.', ultra: 'Everything at full resolution. Needs a fast graphics card.' },
+};
+function renderSettings() {
+  const box = $('#setrows');
+  box.innerHTML = '';
+  for (const [k, label, opts] of SETTINGS) {
+    const l = document.createElement('div');
+    l.className = 'muted';
+    l.textContent = label;
+    const seg = document.createElement('div');
+    seg.className = 'seg';
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', label);
+    for (const [v, name] of opts) {
+      const b = document.createElement('button');
+      b.textContent = name;
+      if (gfx[k] === v) b.classList.add('on');
+      b.addEventListener('click', () => setSetting(k, v));
+      seg.appendChild(b);
+    }
+    box.append(l, seg);
+  }
+  const hint = SETTING_HINTS.quality[gfx.quality];
+  $('#sethint').textContent = hint || '';
+  $('#setfps').checked = gfx.showFps;
+  $('#setnow').textContent = `Now: ${quality} quality, ${Math.round(Math.max(0.5, Math.min(devicePixelRatio, QUALITY[quality].dpr) * resScale) * 100) / 100}× pixels${lastFps ? `, ${Math.round(lastFps)} fps` : ''}`;
+}
+function setSetting(k, v) {
+  gfx[k] = v;
+  store.set('gfx', gfx);
+  if (k === 'quality') {
+    autoCeil = TIERS.indexOf('high');
+    setTier(v === 'auto' ? store.get('autoTier', null) || guessTier() : v);
+  } else if (k === 'res') {
+    resScale = typeof v === 'number' ? v : 1;
+    resWait = 4;
+    setupPost();
+  }
+  renderSettings();
+}
+$('#setfps').addEventListener('change', (e) => {
+  gfx.showFps = e.target.checked;
+  store.set('gfx', gfx);
+  $('#fps').hidden = !gfx.showFps;
+});
 
 // ------------------------------------------------------------------ input
 const keys = new Set();
@@ -977,7 +1170,7 @@ addEventListener('keydown', (e) => {
     e.preventDefault();
     if (!e.repeat && !openName) jumpQueued = true;
   }
-  if (k.startsWith('Arrow')) e.preventDefault();
+  if (k.startsWith('Arrow') || k.startsWith('Alt')) e.preventDefault(); // Alt walks; don't open the browser menu
   if (e.repeat) {
     keys.add(k);
     return;
@@ -986,15 +1179,23 @@ addEventListener('keydown', (e) => {
   else if (k === 'KeyF') openOverlay('find');
   else if (k === 'KeyT') openOverlay('tp');
   else if (k === 'KeyC') openOverlay('char');
+  else if (k === 'KeyG') openOverlay('set');
   else if (k === 'KeyV' && !openName) toggleView();
   else if (k === 'KeyH') {
     const h = $('#help');
     h.hidden = !h.hidden;
     store.set('help', !h.hidden);
-  } else if (k === 'Backquote') $('#fps').hidden = !$('#fps').hidden;
+  } else if (k === 'Backquote') {
+    gfx.showFps = !gfx.showFps;
+    store.set('gfx', gfx);
+    $('#fps').hidden = !gfx.showFps;
+  }
   if (!openName) keys.add(k);
 });
-addEventListener('keyup', (e) => keys.delete(e.code));
+addEventListener('keyup', (e) => {
+  keys.delete(e.code);
+  if (e.code.startsWith('Alt')) e.preventDefault();
+});
 addEventListener('blur', () => keys.clear());
 
 canvas.addEventListener('click', () => {
@@ -1095,8 +1296,13 @@ const clock = new THREE.Clock();
 const miniCtx = $('#mini').getContext('2d');
 let hudTimer = 0, fpsAcc = 0, fpsN = 0, indoorK = 0;
 const dotM = new THREE.Matrix4();
-function frame() {
+let lastFrameT = 0;
+function frame(now = performance.now()) {
   requestAnimationFrame(frame);
+  // frame cap (Settings > Frame rate): skip display refreshes until the next frame is due;
+  // 2 ms of slack so a 60 cap on a 60 Hz screen never drops a frame
+  if (gfx.fps && now - lastFrameT < 1000 / gfx.fps - 2) return;
+  lastFrameT = now;
   const dt = Math.min(clock.getDelta(), 0.05);
   const t = clock.elapsedTime;
   if (!player) return;
@@ -1111,7 +1317,8 @@ function frame() {
       mv.z += joy.z;
     }
     const sprint = keys.has('ShiftLeft') || keys.has('ShiftRight') || touchSprint;
-    player.update(dt, mv, cam.yaw, sprint, jumpQueued);
+    const walk = keys.has('AltLeft') || keys.has('AltRight');
+    player.update(dt, mv, cam.yaw, sprint, jumpQueued, walk);
     jumpQueued = false;
     if (player.pos.y < -20) teleport(SPOTS()[0].p, SPOTS()[0].yaw);
   } else {
@@ -1134,6 +1341,8 @@ function frame() {
   indoorK += ((inside ? 1 : 0) - indoorK) * Math.min(1, dt * 3);
   updateSun(p, inside);
   updateBulbs(dt, p, indoorK);
+  // indirect light for the furniture, which isn't in the lightmaps (see props.js)
+  propFill.value.setRGB(1.0, 0.98, 0.94).multiplyScalar(indoorK * (baked ? 1.6 : 0.6));
 
   info.updateDoors(p.x, p.z, dt);
   const wm = info.water.material.map;
@@ -1163,16 +1372,23 @@ function frame() {
   if (hudTimer <= 0) {
     hudTimer = 0.2;
     locate();
+    cullProps(furn.props, camera.position, indoorK > 0.5, QUALITY[quality].far);
+    cullProps(info.propMeshes, camera.position, indoorK > 0.5, QUALITY[quality].far);
   }
   const mc = $('#mini');
   drawMinimap(miniCtx, mc.width, maps, p.x, p.z, cam.yaw, player.yaw, navPath, player.level, navDest && navDest.lv === player.level ? navDest : null);
   fpsAcc += dt;
   fpsN++;
   if (fpsAcc > 0.5) {
-    $('#fps').textContent = Math.round(fpsN / fpsAcc) + ' fps';
+    const fps = fpsN / fpsAcc;
+    $('#fps').textContent = `${Math.round(fps)} fps · ${quality}` + (resScale < 1 ? ` · ${Math.round(resScale * 100)}% res` : '');
     fpsAcc = 0;
     fpsN = 0;
+    adaptResolution(fps);
   }
+  grass.update(camera, t, QUALITY[quality].grass > 0 && indoorK < 0.99);
+  // the floor under you reflects (indoors, standing on one of the building's floor levels)
+  reflections.update(indoorK > 0.5 && !uw ? (player.level ? LEVEL_H : 0) + 0.02 : null);
   if (composer) composer.render(dt);
   else renderer.render(scene, camera);
 }
@@ -1219,7 +1435,7 @@ function start(data = {}) {
   build()
     .then(() => {
       $('#help').hidden = !store.get('help', !isTouch);
-      $('#fps').hidden = true;
+      $('#fps').hidden = !gfx.showFps;
       const s0 = SPOTS()[0];
       if (data.pos) {
         teleport(data.pos, data.yaw ?? 0);
@@ -1264,6 +1480,10 @@ window.__game = {
   get info() { return info; },
   get nav() { return nav; },
   teleport: (...a) => teleport(...a),
+  spots: () => SPOTS(),
+  loadAvatar: (id) => loadAvatar(id),
+  setLook: (look) => { store.set('look', { ...currentLook(), ...look }); character.setLook(currentLook()); },
+  get character() { return character; },
   plan: (px, py) => [wx(px), wz(py)],
   view: (p, yaw, pitch = -0.05, dist = null, fp = false) => { teleport(p, yaw); cam.yaw = yaw; cam.pitch = pitch; cam.firstPerson = fp; if (dist) cam.dist = cam.curDist = dist; },
   setDestination: (label, lv) => setDestination(info.rooms.find((r) => r.label === label && (lv === undefined || r.level === lv))),
@@ -1278,7 +1498,8 @@ window.__game = {
   get balls() { return balls; },
   get texturesReady() { return texturesReady; },
   freeCam: (pos, at, up) => { freeCam = pos ? [pos, at, up] : null; },
-  setQuality: (q) => { quality = q; applyQuality(); },
+  setQuality: (q) => setTier(q),
   start: () => $('#go').click(),
   renderer,
+  reflections,
 };

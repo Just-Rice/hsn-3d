@@ -9,6 +9,7 @@ import {
 import { Batches, subtractRects, hexToRGB, inRect, WHITE } from './geo.js';
 import { LabelAtlas, rng, textTexture } from './textures.js';
 import { packLightmaps } from './lightmap.js';
+import { Props } from './furniture.js';
 
 const WT = 0.2; // interior wall thickness
 const SK = 0.32; // exterior brick skin thickness
@@ -25,7 +26,7 @@ const CARPETS = ['#6f84ad', '#9a6b4a', '#5d8f7c', '#8b6aa0', '#8f8a4a', '#a85f55
 
 export function floorStyle(room, idx) {
   switch (room.type) {
-    case 'class': return ['carpet', CARPETS[idx % CARPETS.length]];
+    case 'class': return room.science ? ['floorTile', '#d8dbd4'] : ['carpet', CARPETS[idx % CARPETS.length]];
     case 'lab': return ['floorTile', '#d3d7d9'];
     case 'office': return ['carpet', '#7f7568'];
     case 'media': return ['carpet', '#44708f'];
@@ -320,6 +321,14 @@ export function buildBuilding(scene, world, T, M) {
     }
   }
 
+  // the science rooms' square block pillar, mid-room, floor to ceiling
+  for (const rm of rooms) {
+    if (!rm.science) continue;
+    const base = rm.level === 0 ? 0 : LEVEL_H, top = CEIL2[rm.level], h = 0.36;
+    B.get('wall').box(rm.cx - h, base, rm.cz - h, rm.cx + h, top, rm.cz + h, wallColor[rm.level], 'xXzZ');
+    world.add(rm.cx - h, base, rm.cz - h, rm.cx + h, top, rm.cz + h, 1);
+  }
+
   // door frames
   const frameCol = hexToRGB('#5b4a3a');
   for (const d of doorways) {
@@ -331,12 +340,21 @@ export function buildBuilding(scene, world, T, M) {
     segBox(bb, d.axis, d.c, d.p - 0.08, d.q + 0.08, -o, o, base + DOOR_H, base + DOOR_H + 0.08, frameCol);
   }
 
-  // door leaves (swung open into the room) + signs
-  const doorCol = { class: '#a8743f', lab: '#a8743f', office: '#8a6a45', default: '#2a55b8' };
+  // door leaves (swung open into the room) + signs. Wood veneer on classrooms, labs and
+  // offices, painted steel elsewhere; the simple slabs here are replaced by the detailed
+  // models in assets/models/props.glb when it loads (props.js)
+  const doorCol = { class: '#a8743f', lab: '#a8743f', office: '#8a6a45' };
+  const doors = new Props();
+  {
+    const g = new THREE.BoxGeometry(1, DOOR_H - 0.05, 0.05);
+    g.translate(0.5, 0.01 + (DOOR_H - 0.05) / 2, 0);
+    doors.define('doorWood', g, new THREE.MeshStandardMaterial({ color: '#a8743f', roughness: 0.5 }));
+    doors.define('doorSteel', g, new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.4 }));
+  }
   for (const rm of rooms) {
     if (rm.type === 'stair') continue;
     const base = rm.level === 0 ? 0 : LEVEL_H;
-    const col = hexToRGB(doorCol[rm.type] || doorCol.default);
+    const col = '#2a55b8';
     for (const d of rm.doorList) {
       const inward = -d.out;
       const leaves = d.width >= 1.6 ? [d.a, d.b] : [d.a];
@@ -345,13 +363,17 @@ export function buildBuilding(scene, world, T, M) {
         const sgn = hinge === d.a ? 1 : -1;
         const h0 = hinge + sgn * 0.02;
         const t0 = inward * (WT / 2 + 0.01), t1 = inward * (WT / 2 + lw - 0.06);
+        // the leaf (a model from props.glb, 1 m wide, hinged on its local x = 0 edge) is
+        // turned so its width runs into the room and stretched to the opening
+        const wood = rm.type in doorCol;
+        const scale = [lw - 0.07, 1, 1];
         if (d.axis === 'z') {
           const x0 = Math.min(h0, h0 + sgn * 0.05), x1 = Math.max(h0, h0 + sgn * 0.05);
-          B.get('satin').box(x0, base + 0.01, d.c + Math.min(t0, t1), x1, base + DOOR_H - 0.04, d.c + Math.max(t0, t1), col);
+          doors.add(wood ? 'doorWood' : 'doorSteel', (x0 + x1) / 2, base, d.c + t0, -inward * Math.PI / 2, wood ? null : col, scale);
           world.add(x0, base, d.c + Math.min(t0, t1), x1, base + DOOR_H, d.c + Math.max(t0, t1), 2);
         } else {
           const z0 = Math.min(h0, h0 + sgn * 0.05), z1 = Math.max(h0, h0 + sgn * 0.05);
-          B.get('satin').box(d.c + Math.min(t0, t1), base + 0.01, z0, d.c + Math.max(t0, t1), base + DOOR_H - 0.04, z1, col);
+          doors.add(wood ? 'doorWood' : 'doorSteel', d.c + t0, base, (z0 + z1) / 2, inward > 0 ? 0 : Math.PI, wood ? null : col, scale);
           world.add(d.c + Math.min(t0, t1), base, z0, d.c + Math.max(t0, t1), base + DOOR_H, z1, 2);
         }
       }
@@ -512,7 +534,14 @@ export function buildBuilding(scene, world, T, M) {
   }
 
   // ------------------------------------------------------------------ ceilings + lights
-  const lightB = B.get('light');
+  const lightB = B.get('light'); // small downlights (the canopy)
+  const fixtures = new Props();
+  {
+    const g = new THREE.PlaneGeometry(0.6, 1.2);
+    g.rotateX(Math.PI / 2); // facing down
+    g.translate(0, -0.006, 0);
+    fixtures.define('troffer', g, M.light);
+  }
   const lightCenters = [];
   const addLights = (r, y, spacing = 4.2) => {
     const nx = Math.max(1, Math.floor((r[2] - r[0]) / spacing));
@@ -521,9 +550,8 @@ export function buildBuilding(scene, world, T, M) {
     for (let i = 0; i < nx; i++)
       for (let j = 0; j < nz; j++) {
         const cx = r[0] + sx * (i + 0.5), cz = r[1] + sz * (j + 0.5);
-        // lens just below a slightly larger metal trim ring
-        lightB.hquad(cx - 0.3, cz - 0.6, cx + 0.3, cz + 0.6, y - 0.022, false);
-        B.get('satin').box(cx - 0.35, y - 0.02, cz - 0.65, cx + 0.35, y - 0.004, cz + 0.65, hexToRGB('#d9dcdf'), 'yxXzZ');
+        // 2x4 troffer (props.glb; a plain glowing panel until it loads)
+        fixtures.add('troffer', cx, y, cz);
         lightCenters.push([cx, y, cz]);
       }
   };
@@ -826,11 +854,13 @@ export function buildBuilding(scene, world, T, M) {
     lightmapped.push({ mat, page: +key.slice(at + 1) });
   }
   for (const m of B.toMeshes(materials)) scene.add(m);
+  doors.finalize(scene);
+  fixtures.finalize(scene);
 
   const zones = ZONES.map((z) => ({ ...z, R: rectW(z.r) }));
   return {
     rooms, stairs: stairInfo, blocks, blockRects, zones, entrances, mapWalls, water, poolPit, house, atlas, windows,
     courtyard: rectW(COURTYARD), level1Rects, slabRects, updateDoors, blockAt, materials, lightCenters,
-    lightmap, lightmapped, canopy,
+    lightmap, lightmapped, canopy, propMeshes: [...doors.meshes, ...fixtures.meshes],
   };
 }

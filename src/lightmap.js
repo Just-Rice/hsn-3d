@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { GeoBuilder } from './geo.js';
 
 export const LM = {
-  texel: 0.16, // meters per lightmap texel
+  texel: 0.1, // meters per lightmap texel
   size: 2048,
   pad: 2, // texels of padding around each quad
   keys: ['wall', 'floorTile', 'carpet', 'wood', 'ceramic', 'concrete', 'ceiling', 'deck', 'stage'],
